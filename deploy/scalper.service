@@ -1,0 +1,23 @@
+[Unit]
+Description=Polymarket Momentum Scalper (Paper Trading)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/root/polymarket-scalper
+ExecStart=/root/polymarket-scalper/venv/bin/python3 -m scalper
+Restart=always
+RestartSec=10
+EnvironmentFile=/root/polymarket-scalper/.env
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=scalper
+
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=/root/polymarket-scalper
+
+[Install]
+WantedBy=multi-user.target

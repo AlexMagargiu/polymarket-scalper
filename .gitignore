@@ -1,0 +1,33 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+*.egg
+.venv/
+venv/
+
+# SQLite
+*.db
+*.db-journal
+
+# Environment
+.env
+.env.local
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Dashboard
+dashboard/.env.local
+dashboard/node_modules/
+dashboard/.next/
+
+# OS
+.DS_Store
+Thumbs.db
+SPEC.md

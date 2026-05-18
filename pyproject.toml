@@ -1,0 +1,5 @@
+[tool.pytest.ini_options]
+markers = [
+    "integration: marks tests that hit live APIs (deselect with '-m \"not integration\"')",
+]
+asyncio_mode = "auto"

@@ -31,3 +31,4 @@ dashboard/.next/
 .DS_Store
 Thumbs.db
 SPEC.md
+.next/

@@ -8,10 +8,10 @@ You are the **supervisor session** for a Polymarket momentum scalping bot. You d
 
 A Python asyncio bot that:
 1. Connects to Polymarket CLOB WebSocket for real-time price data
-2. Monitors all active markets (hundreds) for price surges
-3. Enters positions when a 15¢+ surge is detected within 30-60 seconds
-4. Rides the momentum with a trailing stop (exit on 5¢ reversal from peak)
-5. Exits within minutes — no overnight holding by default
+2. Monitors all active markets (936+ markets, YES tokens only) for price surges
+3. Enters paper positions when a YES token surges 10¢+ within 30-60 seconds
+4. Rides the momentum with a trailing stop (exit on 10¢ reversal from peak)
+5. **YES side only** — buys YES tokens on upward surges, no NO/short positions
 
 This is NOT a prediction market bot. We don't predict outcomes. We ride price momentum caused by others acting on information.
 
@@ -19,37 +19,89 @@ This is NOT a prediction market bot. We don't predict outcomes. We ride price mo
 
 ## Current Status
 
-- **Phase**: Pre-development (spec written, not yet coded)
-- **Spec**: `SPEC.md` — architecture, parameters, phases, open questions
+- **Phase**: Paper Trading (deployed and running on VPS)
 - **Repo**: `/home/sis-magargiu-alexandru-v2/repos/polymarket-scalper/`
-- **Language**: Python (asyncio)
-- **Deployment target**: Same VPS as weather bot (Hetzner Finland, 8GB RAM)
-- **Latency to Polymarket**: ~30-40ms (Polymarket is in AWS eu-west-2, London)
+- **GitHub**: `git@github.com:AlexMagargiu/polymarket-scalper.git`
+- **Language**: Python 3.12 (asyncio)
+- **Database**: SQLite (`/root/polymarket-scalper/scalper.db`)
+- **Dashboard**: Next.js on Vercel
+- **Bot service**: systemd `scalper.service` on VPS
+- **RAM usage**: ~65 MB
+- **Messages/sec**: ~1,000 from Polymarket WebSocket
+- **Tokens subscribed**: ~943 (YES only, no NO tokens)
+
+### Known Issues Fixed
+- **v1 (bidirectional)**: Entered both YES and NO on same market simultaneously → guaranteed loss. Fixed: YES-only.
+- **v2 (resolving markets)**: Markets resolving to 0/1 looked like surges → entered at 40¢, exited at 0¢. Fixed: reject bid < 2¢ or ask > 98¢, spread > 15¢.
+
+### Open Questions (need more data)
+- Is 10¢ trailing stop too tight? MFE analysis will tell us once we have ~50+ trades.
+- Should we filter sports/esports markets that swing on live game events?
+- Should there be a minimum hold period before trailing stop activates?
 
 ---
 
-## Key Design Decisions (To Discuss)
+## Architecture
 
-The spec has open questions. Your job is to discuss these with the user and make decisions:
+```
+scalper/
+├── main.py            # Asyncio orchestrator — wires all modules
+├── config.py          # All parameters + env vars
+├── models.py          # Dataclasses: Market, Surge, Position, Trade
+├── db.py              # Async SQLite (surges, trades, balance_log)
+├── api.py             # aiohttp REST API (20+ endpoints) for dashboard
+├── markets.py         # Gamma API market discovery + refresh every 5 min
+├── websocket.py       # WebSocket manager with auto-reconnect + heartbeat
+├── detector.py        # Surge detection (rolling windows, cooldowns)
+├── paper_engine.py    # Paper trading (entry validation, trailing stops, P&L)
+├── telegram.py        # Telegram alerts with rate limiting
+└── backtest.py        # Stats, CSV export, parameter simulation
+dashboard/             # Next.js (Vercel) — overview, markets, surges, trades, positions, backtest, settings
+deploy/                # systemd service, deploy script, env template
+```
 
-1. **Surge detection parameters**: 15¢ threshold, 30-60s window — are these right?
-2. **Trailing stop**: 5¢ reversal — too tight? too loose?
-3. **Entry method**: Taker (guaranteed fill, 2% fee) vs maker (free but might miss)
-4. **Bidirectional**: Ride up AND down? Or only up?
-5. **Market selection**: Volume threshold, category focus
-6. **Position sizing**: Fixed $25? Or scale by confidence/volume?
-7. **Concurrent positions**: Max 5? More?
+---
+
+## Finalized Parameters
+
+| Parameter | Value |
+|-----------|-------|
+| Surge threshold | 10¢ in 30-60s |
+| Trailing stop | 10¢ reversal from peak |
+| Take profit | Hard exit at 90¢ |
+| Direction | **YES only** — UP surges, buy YES tokens |
+| Position size | $25 per trade |
+| Starting balance | $5,000 paper |
+| Max concurrent | 10 positions |
+| Max per market | 3 (scaling in) |
+| Daily loss limit | $500 |
+| Max daily trades | 100 |
+| Fee simulation | 2% taker both sides |
+| Market filter | $10K+ 24h volume, all categories |
+| Overnight | Hold, exit on reversal |
+| Resolving filter | Reject if bid < 2¢ or ask > 98¢ |
+| Spread filter | Reject if spread > 15¢ |
 
 ---
 
 ## Environment
 
-### VPS (shared with weather bot)
+### VPS (shared with weather bot + polymarket sidecar)
 
 - **SSH**: `ssh -i ~/.ssh/github root@89.167.90.189`
-- **OS**: Linux, 8GB RAM, 4-core CPU
-- **Weather bot uses**: ~3GB RAM → 5GB free for scalper
-- **Python**: 3.11+ available
+- **OS**: Ubuntu, 8GB RAM, 4-core CPU
+- **Python**: 3.12
+- **Bot process**: `systemctl status scalper`
+- **Logs**: `journalctl -u scalper -f`
+- **API**: `http://89.167.90.189:8099` (port 8099, auth token required)
+- **Database**: `/root/polymarket-scalper/scalper.db` (SQLite)
+- **Env file**: `/root/polymarket-scalper/.env`
+
+### Other projects on this VPS — DO NOT TOUCH
+
+- **Weather bot**: `/home/sis-magargiu-alexandru-v2/repos/weather_arb/` (Go, separate service)
+- **Polymarket sidecar**: `/root/polymarket-sidecar/` (Python FastAPI for CLOB V2)
+- **PostgreSQL**: Running for the other two projects — this scalper uses SQLite instead
 
 ### Polymarket APIs
 
@@ -59,7 +111,13 @@ The spec has open questions. Your job is to discuss these with the user and make
 - **Official SDK**: `pip install py-clob-client`
 - **Auth**: API key + secret + Polygon wallet (EIP-712 signing)
 
-### Requirements for Live Trading
+### Telegram
+
+- **Bot**: `@pm_scalper_bot`
+- **Chat ID**: `8479678665`
+- **Alerts**: entry, exit, surge, daily summary, status, error
+
+### Requirements for Live Trading (Phase 3)
 
 - Polymarket account with API credentials
 - Funded USDC wallet on Polygon
@@ -69,48 +127,72 @@ The spec has open questions. Your job is to discuss these with the user and make
 
 ## Development Phases
 
-| Phase | What | Duration | Gate to Next |
-|-------|------|----------|-------------|
-| 1. Observer | Connect WebSocket, log surges, no trading | 3-5 days | Confirmed 5+ surge events/day |
-| 2. Paper | Simulate entries/exits on logged surges | 1-2 weeks | Positive paper P&L |
-| 3. Live Small | Real trades at $10-25 | 1 week | Matches paper within 20% |
-| 4. Scale | $50 positions, more markets | Ongoing | Consistent daily profit |
+| Phase | What | Status | Gate to Next |
+|-------|------|--------|-------------|
+| 1. Observer | Connect WebSocket, log surges | ✅ Done | Surges detected |
+| 2. Paper | Simulate entries/exits, track P&L | 🟡 Running | Positive paper P&L |
+| 3. Live Small | Real trades at $10-25 | Not started | Matches paper within 20% |
+| 4. Scale | $50 positions, more markets | Not started | Consistent daily profit |
 
 ---
 
-## Working Process
+## Commands
 
-```
-1. User raises a question or asks for analysis
-2. Discuss architecture/strategy decisions
-3. Write code or create coding prompts
-4. Test locally → deploy to VPS
-5. Monitor Phase 1 observer data → tune parameters
-6. Progress through phases with user approval
+```bash
+# Bot management
+systemctl start/stop/restart scalper
+journalctl -u scalper -f                    # live logs
+journalctl -u scalper --since "1 hour ago"  # recent logs
+
+# API (from VPS, no auth needed on localhost for /health)
+curl http://localhost:8099/api/health
+curl -H "Authorization: Bearer $API_AUTH_TOKEN" http://localhost:8099/api/engine/status
+curl -H "Authorization: Bearer $API_AUTH_TOKEN" http://localhost:8099/api/detector/stats
+curl -H "Authorization: Bearer $API_AUTH_TOKEN" http://localhost:8099/api/ws/status
+curl -H "Authorization: Bearer $API_AUTH_TOKEN" http://localhost:8099/api/positions
+curl -H "Authorization: Bearer $API_AUTH_TOKEN" http://localhost:8099/api/surges/live
+
+# Backtest (from VPS)
+cd /root/polymarket-scalper
+venv/bin/python3 -m scalper.backtest --stats
+venv/bin/python3 -m scalper.backtest --export
+venv/bin/python3 -m scalper.backtest --simulate --threshold 0.15 --trailing 0.08
+
+# Deploy (from local machine)
+cd /home/sis-magargiu-alexandru-v2/repos/polymarket-scalper
+./deploy/deploy.sh
+
+# Tests (from local machine)
+.venv/bin/pytest tests/ -v -m "not integration"   # 59 unit tests
+
+# Dashboard (local dev)
+cd dashboard && npm run dev
 ```
 
 ---
 
 ## What You Do
 
-1. **Design the system** — Architecture, data flow, state management
-2. **Write code** — Python asyncio, WebSocket handling, order execution
-3. **Analyze data** — Once observer is running, analyze surge frequency/quality
-4. **Tune parameters** — Based on observed data, adjust thresholds
-5. **Manage risk** — Set position limits, daily loss caps, correlation guards
+1. **Monitor paper trading** — Analyze surge frequency, trade quality, P&L
+2. **Tune parameters** — Based on observed data, adjust thresholds via config
+3. **Analyze data** — Run backtest stats, check if we're exiting too early (MFE analysis)
+4. **Manage risk** — Review daily loss patterns, position correlation
+5. **Write code** — Bug fixes, parameter tuning, new features
+6. **Plan Phase 3** — When paper P&L is positive, prepare for live trading
 
 ## What You Do NOT Do
 
 - **Never trade real money without user approval** for each phase transition
-- **Never share API keys/wallet keys** outside the bot
-- **Never touch the weather bot** — separate project, separate service
+- **Never share API keys/wallet keys/bot tokens** outside the bot
+- **Never touch the weather bot or polymarket sidecar** — separate projects, separate services
+- **Never modify PostgreSQL** — it belongs to the other projects
 - **Never exceed position limits** — hard-coded caps, not soft suggestions
 
 ---
 
 ## Technical Notes
 
-### Polymarket CLOB Order Types
+### Polymarket CLOB Order Types (for Phase 3)
 
 - **GTC (Good Till Cancel)**: Stays on book until filled or cancelled
 - **GTD (Good Till Date)**: Expires at specified time
@@ -121,42 +203,25 @@ For momentum scalping:
 - Exit: GTC limit order at trailing_stop price — adjust as trailing high moves
 - Emergency exit: FOK at best_bid (taker, 2% fee) if position stuck
 
-### WebSocket Data Format
+### WebSocket Message Types We Use
 
-```json
-{
-  "market": "condition_id_here",
-  "asset_id": "token_id",
-  "price": "0.35",
-  "side": "buy",
-  "size": "100.00",
-  "timestamp": "2026-05-17T12:00:00Z"
-}
-```
+| Type | Purpose | Frequency |
+|------|---------|-----------|
+| `best_bid_ask` | Surge detection + trailing stops | High (~1000/s total) |
+| `last_trade_price` | Trade confirmation (optional) | Medium |
+| `book` | Initial orderbook snapshot on subscribe | Once per token |
+| `price_change` | Ignored (too noisy) | Very high |
 
 ### Rate Limits
 
 - REST API: 100 requests/minute (orders)
-- WebSocket: No explicit limit on subscriptions, but recommended <200 markets per connection
-- Multiple WebSocket connections allowed
-
----
-
-## Relationship to Weather Bot
-
-The weather bot (`/home/sis-magargiu-alexandru-v2/repos/weather_arb/`) is a completely separate project:
-- Different strategy (hold-to-resolution vs momentum scalp)
-- Different architecture (30-min cron vs real-time event loop)
-- Different language (Go vs Python)
-- Shares the VPS but runs as a separate process/service
-
-The Polymarket sidecar at `/root/polymarket-sidecar/` (Python FastAPI for CLOB V2) has some reusable code for wallet signing and order placement. Check it for reference but don't depend on it — build fresh.
+- WebSocket: No explicit limit, currently subscribed to ~943 YES tokens on 1 connection
+- Telegram: Rate limited to 20 messages/minute by our code
 
 ---
 
 ## User Preferences
 
 - **Data-driven** — Show numbers before making decisions
-- **Phased approach** — Don't jump to live trading. Observer → paper → small → scale.
-- **Spec is not final** — The SPEC.md is a starting point for discussion, not a rigid plan
+- **Phased approach** — Don't jump to live trading. Paper → analyze → tune → live.
 - **Romanian timezone** — UTC+3

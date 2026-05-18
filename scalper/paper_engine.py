@@ -70,10 +70,11 @@ class PaperEngine:
     ) -> Optional[Position]:
         self._check_daily_reset()
 
-        if surge.direction == Direction.UP:
-            entry_price = current_ask
-        else:
-            entry_price = current_bid
+        if surge.direction != Direction.UP:
+            logger.debug("Rejected non-UP surge for %s", surge.market_name[:30])
+            return None
+
+        entry_price = current_ask
 
         rejection = self._validate_entry(surge, entry_price)
         if rejection:
@@ -160,11 +161,8 @@ class PaperEngine:
         if entry_price < config.MIN_ENTRY_PRICE:
             return f"price too low ({entry_price:.2f} < {config.MIN_ENTRY_PRICE})"
 
-        if surge.direction == Direction.UP and entry_price > config.MAX_ENTRY_PRICE_YES:
-            return f"YES entry too high ({entry_price:.2f} > {config.MAX_ENTRY_PRICE_YES})"
-
-        if surge.direction == Direction.DOWN and entry_price < config.MIN_ENTRY_PRICE_NO:
-            return f"NO entry too low ({entry_price:.2f} < {config.MIN_ENTRY_PRICE_NO})"
+        if entry_price > config.MAX_ENTRY_PRICE_YES:
+            return f"entry too high ({entry_price:.2f} > {config.MAX_ENTRY_PRICE_YES})"
 
         return None
 
@@ -191,37 +189,20 @@ class PaperEngine:
             exit_reason = None
             exit_price = None
 
-            if pos.direction == Direction.UP:
-                if midpoint > pos.trailing_peak:
-                    pos.trailing_peak = midpoint
+            if midpoint > pos.trailing_peak:
+                pos.trailing_peak = midpoint
 
-                mfe = midpoint - pos.entry_price
-                if mfe > pos.max_favorable_excursion:
-                    pos.max_favorable_excursion = mfe
+            mfe = midpoint - pos.entry_price
+            if mfe > pos.max_favorable_excursion:
+                pos.max_favorable_excursion = mfe
 
-                if pos.trailing_peak - midpoint >= config.TRAILING_STOP:
-                    exit_reason = ExitReason.TRAILING_STOP
-                    exit_price = best_bid
+            if pos.trailing_peak - midpoint >= config.TRAILING_STOP:
+                exit_reason = ExitReason.TRAILING_STOP
+                exit_price = best_bid
 
-                if midpoint >= config.TAKE_PROFIT:
-                    exit_reason = ExitReason.TAKE_PROFIT
-                    exit_price = best_bid
-
-            else:
-                if pos.trailing_peak == pos.entry_price or midpoint < pos.trailing_peak:
-                    pos.trailing_peak = midpoint
-
-                mfe = pos.entry_price - midpoint
-                if mfe > pos.max_favorable_excursion:
-                    pos.max_favorable_excursion = mfe
-
-                if midpoint - pos.trailing_peak >= config.TRAILING_STOP:
-                    exit_reason = ExitReason.TRAILING_STOP
-                    exit_price = best_ask
-
-                if midpoint <= (1.0 - config.TAKE_PROFIT):
-                    exit_reason = ExitReason.TAKE_PROFIT
-                    exit_price = best_ask
+            if midpoint >= config.TAKE_PROFIT:
+                exit_reason = ExitReason.TAKE_PROFIT
+                exit_price = best_bid
 
             if exit_reason:
                 trade = await self._close_position(
@@ -241,11 +222,7 @@ class PaperEngine:
         timestamp: float,
     ) -> Optional[Trade]:
         exit_fee = pos.shares * exit_price * config.TAKER_FEE_RATE
-
-        if pos.direction == Direction.UP:
-            pnl = (exit_price - pos.entry_price) * pos.shares - pos.entry_fee - exit_fee
-        else:
-            pnl = (pos.entry_price - exit_price) * pos.shares - pos.entry_fee - exit_fee
+        pnl = (exit_price - pos.entry_price) * pos.shares - pos.entry_fee - exit_fee
 
         pnl = round(pnl, 2)
 
@@ -321,10 +298,7 @@ class PaperEngine:
             else:
                 bid = ask = pos.entry_price
 
-            if pos.direction == Direction.UP:
-                exit_price = bid
-            else:
-                exit_price = ask
+            exit_price = bid
 
             trade = await self._close_position(
                 trade_id, pos, exit_price, ExitReason.DISCONNECT, now
@@ -365,10 +339,7 @@ class PaperEngine:
                 current_price = pos.entry_price
 
             projected_exit_fee = pos.shares * current_price * config.TAKER_FEE_RATE
-            if pos.direction == Direction.UP:
-                unrealized = (current_price - pos.entry_price) * pos.shares - pos.entry_fee - projected_exit_fee
-            else:
-                unrealized = (pos.entry_price - current_price) * pos.shares - pos.entry_fee - projected_exit_fee
+            unrealized = (current_price - pos.entry_price) * pos.shares - pos.entry_fee - projected_exit_fee
 
             result.append(
                 {

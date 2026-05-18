@@ -56,12 +56,9 @@ class SurgeDetector:
             return None
 
         min_point = min(relevant_points, key=lambda p: p.midpoint)
-        max_point = max(relevant_points, key=lambda p: p.midpoint)
-
-        result = None
 
         if midpoint - min_point.midpoint >= config.SURGE_THRESHOLD:
-            result = self._try_fire_surge(
+            return self._try_fire_surge(
                 token_id=token_id,
                 direction=Direction.UP,
                 magnitude=midpoint - min_point.midpoint,
@@ -70,19 +67,7 @@ class SurgeDetector:
                 timestamp=timestamp,
             )
 
-        if max_point.midpoint - midpoint >= config.SURGE_THRESHOLD:
-            down_result = self._try_fire_surge(
-                token_id=token_id,
-                direction=Direction.DOWN,
-                magnitude=max_point.midpoint - midpoint,
-                window_seconds=timestamp - max_point.timestamp,
-                price_at_detection=midpoint,
-                timestamp=timestamp,
-            )
-            if result is None:
-                result = down_result
-
-        return result
+        return None
 
     def _try_fire_surge(
         self,

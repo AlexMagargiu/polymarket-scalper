@@ -89,11 +89,7 @@ async def fetch_markets() -> list[Market]:
 
 
 def get_all_token_ids(markets: list[Market]) -> list[str]:
-    tokens = []
-    for m in markets:
-        tokens.append(m.token_id_yes)
-        tokens.append(m.token_id_no)
-    return tokens
+    return [m.token_id_yes for m in markets]
 
 
 def compute_market_changes(
@@ -111,12 +107,12 @@ def compute_market_changes(
     added_tokens = []
     for cond in added_conds:
         m = new_by_cond[cond]
-        added_tokens.extend([m.token_id_yes, m.token_id_no])
+        added_tokens.append(m.token_id_yes)
 
     removed_tokens = []
     for cond in removed_conds:
         m = old_by_cond[cond]
-        removed_tokens.extend([m.token_id_yes, m.token_id_no])
+        removed_tokens.append(m.token_id_yes)
 
     return added_tokens, removed_tokens
 
@@ -125,7 +121,6 @@ def build_token_to_market_map(markets: list[Market]) -> dict[str, Market]:
     mapping = {}
     for m in markets:
         mapping[m.token_id_yes] = m
-        mapping[m.token_id_no] = m
     return mapping
 
 

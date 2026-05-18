@@ -76,6 +76,17 @@ class PaperEngine:
 
         entry_price = current_ask
 
+        # Reject if market is resolving (bid near 0 or ask near 1)
+        if current_bid < 0.02 or current_ask > 0.98:
+            logger.debug("Rejected resolving market %s (bid=%.2f ask=%.2f)", surge.market_name[:30], current_bid, current_ask)
+            return None
+
+        # Reject if spread is too wide (illiquid or resolving)
+        spread = current_ask - current_bid
+        if spread > 0.15:
+            logger.debug("Rejected wide spread %s (spread=%.2f)", surge.market_name[:30], spread)
+            return None
+
         rejection = self._validate_entry(surge, entry_price)
         if rejection:
             logger.debug("Entry rejected for %s: %s", surge.market_name[:30], rejection)

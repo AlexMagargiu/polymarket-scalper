@@ -30,6 +30,10 @@ def _parse_market(item: dict) -> Market | None:
     if volume < config.MIN_VOLUME_24H:
         return None
 
+    is_sports = bool(item.get("sportsMarketType") or item.get("gameStartTime"))
+    if is_sports:
+        return None
+
     return Market(
         condition_id=condition_id,
         token_id_yes=tokens[0],
@@ -37,6 +41,7 @@ def _parse_market(item: dict) -> Market | None:
         name=item.get("question", "Unknown"),
         volume_24h=volume,
         category=item.get("category") or "",
+        is_sports=False,
     )
 
 

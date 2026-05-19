@@ -1,6 +1,6 @@
 import asyncio
 import json
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -10,6 +10,7 @@ from scalper.websocket import (
     LastTradePriceEvent,
     WebSocketManager,
     WsState,
+    _WebSocketConnection,
 )
 
 
@@ -104,49 +105,114 @@ def test_parse_malformed_event():
     assert event is None
 
 
-async def test_subscribe_tracks_tokens():
-    mgr = WebSocketManager()
-    mgr._ws = AsyncMock()
-    await mgr.subscribe(["tok_a", "tok_b", "tok_c"])
-    assert mgr._subscribed_tokens == {"tok_a", "tok_b", "tok_c"}
-    mgr._ws.send.assert_called_once()
-    sent = json.loads(mgr._ws.send.call_args[0][0])
+async def test_connection_subscribe_tracks_tokens():
+    conn = _WebSocketConnection(0)
+    conn._ws = AsyncMock()
+    conn.state = WsState.CONNECTED
+    await conn.subscribe(["tok_a", "tok_b", "tok_c"])
+    assert conn._tokens == {"tok_a", "tok_b", "tok_c"}
+    conn._ws.send.assert_called_once()
+    sent = json.loads(conn._ws.send.call_args[0][0])
     assert sent["type"] == "market"
     assert sent["custom_feature_enabled"] is True
     assert set(sent["assets_ids"]) == {"tok_a", "tok_b", "tok_c"}
 
 
-async def test_add_tokens():
-    mgr = WebSocketManager()
-    mgr._ws = AsyncMock()
-    mgr._subscribed_tokens = {"tok_a"}
-    await mgr.add_tokens(["tok_b", "tok_c"])
-    assert mgr._subscribed_tokens == {"tok_a", "tok_b", "tok_c"}
-    sent = json.loads(mgr._ws.send.call_args[0][0])
+async def test_connection_add_tokens():
+    conn = _WebSocketConnection(0)
+    conn._ws = AsyncMock()
+    conn.state = WsState.CONNECTED
+    conn._tokens = {"tok_a"}
+    await conn.add_tokens(["tok_b", "tok_c"])
+    assert conn._tokens == {"tok_a", "tok_b", "tok_c"}
+    sent = json.loads(conn._ws.send.call_args[0][0])
     assert sent["operation"] == "subscribe"
 
 
-async def test_remove_tokens():
-    mgr = WebSocketManager()
-    mgr._ws = AsyncMock()
-    mgr._subscribed_tokens = {"tok_a", "tok_b", "tok_c"}
-    await mgr.remove_tokens(["tok_b"])
-    assert mgr._subscribed_tokens == {"tok_a", "tok_c"}
-    sent = json.loads(mgr._ws.send.call_args[0][0])
+async def test_connection_add_tokens_while_disconnected():
+    conn = _WebSocketConnection(0)
+    conn.state = WsState.RECONNECTING
+    conn._tokens = {"tok_a"}
+    await conn.add_tokens(["tok_b"])
+    assert conn._tokens == {"tok_a", "tok_b"}
+
+
+async def test_connection_remove_tokens():
+    conn = _WebSocketConnection(0)
+    conn._ws = AsyncMock()
+    conn.state = WsState.CONNECTED
+    conn._tokens = {"tok_a", "tok_b", "tok_c"}
+    await conn.remove_tokens(["tok_b"])
+    assert conn._tokens == {"tok_a", "tok_c"}
+    sent = json.loads(conn._ws.send.call_args[0][0])
     assert sent["operation"] == "unsubscribe"
+
+
+async def test_manager_subscribe_distributes_tokens():
+    mgr = WebSocketManager()
+    tokens = [f"tok_{i}" for i in range(450)]
+    with patch.object(_WebSocketConnection, "connect", new_callable=AsyncMock):
+        with patch.object(_WebSocketConnection, "subscribe", new_callable=AsyncMock) as mock_sub:
+            await mgr.subscribe(tokens)
+    assert len(mgr._connections) == 3
+    total_subscribed = sum(
+        len(call.args[0]) for call in mock_sub.call_args_list
+    )
+    assert total_subscribed == 450
+    assert len(mgr._connections[0]._tokens) == 0  # subscribe was mocked
+    assert len(mgr._token_to_conn) == 450
+
+
+async def test_manager_add_tokens_fills_existing_connections():
+    mgr = WebSocketManager()
+    conn = mgr._create_connection()
+    conn._ws = AsyncMock()
+    conn.state = WsState.CONNECTED
+    conn._tokens = {f"tok_{i}" for i in range(190)}
+    for tok in conn._tokens:
+        mgr._token_to_conn[tok] = conn
+    await mgr.add_tokens(["new_a", "new_b"])
+    assert "new_a" in conn._tokens
+    assert "new_b" in conn._tokens
+    assert len(mgr._connections) == 1
 
 
 def test_get_status():
     mgr = WebSocketManager()
-    mgr.state = WsState.CONNECTED
-    mgr._subscribed_tokens = {"a", "b", "c"}
-    mgr._reconnect_count = 2
-    mgr._total_messages = 500
+    conn = mgr._create_connection()
+    conn.state = WsState.CONNECTED
+    conn._tokens = {"a", "b", "c"}
+    conn._reconnect_count = 2
+    conn._total_messages = 500
     status = mgr.get_status()
     assert status["state"] == "connected"
     assert status["subscribed_tokens"] == 3
     assert status["reconnect_count"] == 2
     assert status["total_messages"] == 500
+    assert status["connections"] == 1
+    assert status["tokens_per_connection"] == [3]
+
+
+def test_state_aggregation():
+    mgr = WebSocketManager()
+    c1 = mgr._create_connection()
+    c2 = mgr._create_connection()
+    c1.state = WsState.CONNECTED
+    c2.state = WsState.RECONNECTING
+    assert mgr.state == WsState.CONNECTED
+
+    c1.state = WsState.DISCONNECTED
+    assert mgr.state == WsState.RECONNECTING
+
+    c2.state = WsState.DISCONNECTED
+    assert mgr.state == WsState.DISCONNECTED
+
+
+def test_connection_capacity():
+    conn = _WebSocketConnection(0)
+    assert conn.capacity == 200
+    conn._tokens = {f"tok_{i}" for i in range(150)}
+    assert conn.capacity == 50
 
 
 @pytest.mark.integration
@@ -158,7 +224,6 @@ async def test_websocket_live():
     tokens = get_all_token_ids(markets[:2])
 
     mgr = WebSocketManager()
-    await mgr.connect()
     await mgr.subscribe(tokens)
 
     events = []

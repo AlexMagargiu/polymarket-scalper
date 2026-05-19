@@ -29,6 +29,7 @@ class Market:
     name: str
     volume_24h: float
     category: str = ""
+    is_sports: bool = False
 
 
 @dataclass

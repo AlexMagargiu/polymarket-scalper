@@ -11,7 +11,9 @@ SURGE_COOLDOWN = 60             # seconds — don't fire same direction on same 
 # === Entry Bounds ===
 MAX_ENTRY_PRICE_YES = 0.40      # don't buy YES above 40c
 MIN_ENTRY_PRICE_NO = 0.60       # don't buy NO below 60c (i.e., YES above 60c)
-MIN_ENTRY_PRICE = 0.10          # below this, no liquidity
+
+# === Surge Confirmation ===
+SURGE_CONFIRMATION_DELAY = 5    # seconds — wait before entering, price must hold
 
 # === Position / Risk Limits ===
 POSITION_SIZE = 25.0            # $25 per trade
@@ -37,6 +39,9 @@ TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
 API_PORT = int(os.getenv("API_PORT", "8099"))
 API_AUTH_TOKEN = os.getenv("API_AUTH_TOKEN", "")
+
+# === WebSocket Pool ===
+WS_MAX_TOKENS_PER_CONNECTION = 200  # Polymarket practical limit ~500, NautilusTrader defaults to 200
 
 # === Reconnect ===
 RECONNECT_INITIAL_DELAY = 1.0   # seconds

@@ -72,15 +72,47 @@ async def main():
     logger.info("Fetched %d markets (%d tokens)", len(markets), len(all_tokens))
 
     ws = WebSocketManager()
-    await ws.connect()
     await ws.subscribe(all_tokens)
     set_ws_manager(ws)
 
     await notifier.send_status(engine.get_status())
 
+    pending_surges: dict[str, tuple] = {}
+
     async def on_event(event):
         try:
             if isinstance(event, BestBidAskEvent):
+                pending = pending_surges.get(event.asset_id)
+                if pending:
+                    surge = pending[0]
+                    elapsed = event.timestamp - surge.timestamp
+                    if elapsed >= config.SURGE_CONFIRMATION_DELAY:
+                        midpoint = (event.best_bid + event.best_ask) / 2
+                        if midpoint >= surge.price_at_detection:
+                            logger.info(
+                                "CONFIRMED surge for %s — price held %.2f >= %.2f after %.1fs",
+                                surge.market_name[:30], midpoint,
+                                surge.price_at_detection, elapsed,
+                            )
+                            position = await engine.on_surge(
+                                surge, event.best_bid, event.best_ask
+                            )
+                            if position:
+                                await notifier.send_entry(position)
+                            else:
+                                await db.log_surge(surge)
+                        else:
+                            logger.info(
+                                "REJECTED surge for %s — price dropped %.2f < %.2f after %.1fs",
+                                surge.market_name[:30], midpoint,
+                                surge.price_at_detection, elapsed,
+                            )
+                            await db.log_surge(surge)
+                        del pending_surges[event.asset_id]
+                    elif elapsed > 30:
+                        del pending_surges[event.asset_id]
+                        await db.log_surge(surge)
+
                 surge = detector.on_price_update(
                     event.asset_id, event.best_bid, event.best_ask, event.timestamp
                 )
@@ -91,14 +123,12 @@ async def main():
                 for trade in closed_trades:
                     await notifier.send_exit(trade)
 
-                if surge:
-                    position = await engine.on_surge(
-                        surge, event.best_bid, event.best_ask
+                if surge and event.asset_id not in pending_surges:
+                    pending_surges[event.asset_id] = (surge,)
+                    logger.info(
+                        "PENDING surge for %s — waiting %ds for confirmation",
+                        surge.market_name[:30], config.SURGE_CONFIRMATION_DELAY,
                     )
-                    if position:
-                        await notifier.send_entry(position)
-                    else:
-                        await db.log_surge(surge)
 
             elif isinstance(event, BookSnapshotEvent):
                 detector.on_price_update(

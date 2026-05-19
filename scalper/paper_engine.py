@@ -169,9 +169,6 @@ class PaperEngine:
             self._paused = True
             return f"daily loss limit (${config.DAILY_LOSS_LIMIT})"
 
-        if entry_price < config.MIN_ENTRY_PRICE:
-            return f"price too low ({entry_price:.2f} < {config.MIN_ENTRY_PRICE})"
-
         if entry_price > config.MAX_ENTRY_PRICE_YES:
             return f"entry too high ({entry_price:.2f} > {config.MAX_ENTRY_PRICE_YES})"
 

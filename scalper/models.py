@@ -53,6 +53,18 @@ class Surge:
 
 
 @dataclass
+class Trend:
+    market_id: str
+    token_id: str
+    market_name: str
+    surge_count: int
+    first_surge_price: float
+    current_price: float
+    window_seconds: float
+    timestamp: float
+
+
+@dataclass
 class Position:
     id: Optional[int] = None  # DB id, set after insert
     market_id: str = ""

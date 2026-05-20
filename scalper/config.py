@@ -1,19 +1,16 @@
 import os
 
 # === Strategy Parameters ===
-SURGE_THRESHOLD = 0.10          # 10c minimum move to trigger entry
-DETECTION_WINDOW_MIN = 30       # seconds — surge must happen within this window
+SURGE_THRESHOLD = 0.10          # 10c move to count as internal surge signal
+DETECTION_WINDOW_MIN = 30       # seconds — surge detection window
 DETECTION_WINDOW_MAX = 60       # seconds — upper bound of detection window
-TRAILING_STOP = 0.10            # 10c reversal from peak triggers exit
 TAKE_PROFIT = 0.90              # hard exit at 90c
-SURGE_COOLDOWN = 60             # seconds — don't fire same direction on same token
 
-# === Entry Bounds ===
-MAX_ENTRY_PRICE_YES = 0.40      # don't buy YES above 40c
-MIN_ENTRY_PRICE_NO = 0.60       # don't buy NO below 60c (i.e., YES above 60c)
-
-# === Surge Confirmation ===
-SURGE_CONFIRMATION_DELAY = 5    # seconds — wait before entering, price must hold
+# === Trend Detection ===
+TREND_WINDOW = 900              # 15 minutes — how far back to look for surge history
+TREND_MIN_SURGES = 3            # minimum ascending surges to confirm a trend
+TREND_COOLDOWN = 300            # 5 minutes — don't re-enter same token after trend fires
+TRAILING_STOP_PCT = 0.30        # 30% reversal from peak triggers exit
 
 # === Position / Risk Limits ===
 POSITION_SIZE = 25.0            # $25 per trade

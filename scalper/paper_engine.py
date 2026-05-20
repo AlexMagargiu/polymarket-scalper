@@ -10,6 +10,7 @@ from scalper.models import (
     Position,
     PositionStatus,
     Surge,
+    Trend,
     Trade,
 )
 
@@ -62,50 +63,54 @@ class PaperEngine:
             len(self._positions),
         )
 
-    async def on_surge(
+    async def on_trend(
         self,
-        surge: Surge,
+        trend: Trend,
         current_bid: float,
         current_ask: float,
     ) -> Optional[Position]:
         self._check_daily_reset()
 
-        if surge.direction != Direction.UP:
-            logger.debug("Rejected non-UP surge for %s", surge.market_name[:30])
-            return None
-
         entry_price = current_ask
 
-        # Reject if market is resolving (bid near 0 or ask near 1)
         if current_bid < 0.02 or current_ask > 0.98:
-            logger.debug("Rejected resolving market %s (bid=%.2f ask=%.2f)", surge.market_name[:30], current_bid, current_ask)
+            logger.debug("Rejected resolving market %s (bid=%.2f ask=%.2f)", trend.market_name[:30], current_bid, current_ask)
             return None
 
-        # Reject if spread is too wide (illiquid or resolving)
         spread = current_ask - current_bid
         if spread > 0.15:
-            logger.debug("Rejected wide spread %s (spread=%.2f)", surge.market_name[:30], spread)
+            logger.debug("Rejected wide spread %s (spread=%.2f)", trend.market_name[:30], spread)
             return None
 
-        rejection = self._validate_entry(surge, entry_price)
+        rejection = self._validate_entry(trend, entry_price)
         if rejection:
-            logger.debug("Entry rejected for %s: %s", surge.market_name[:30], rejection)
+            logger.debug("Entry rejected for %s: %s", trend.market_name[:30], rejection)
             return None
 
         shares = config.POSITION_SIZE / entry_price
         entry_fee = config.POSITION_SIZE * config.TAKER_FEE_RATE
 
-        surge_id = await db.log_surge(surge)
+        surge_for_db = Surge(
+            market_id=trend.market_id,
+            token_id=trend.token_id,
+            market_name=trend.market_name,
+            direction=Direction.UP,
+            magnitude=round(trend.current_price - trend.first_surge_price, 4),
+            window_seconds=trend.window_seconds,
+            price_at_detection=trend.current_price,
+            timestamp=trend.timestamp,
+        )
+        surge_id = await db.log_surge(surge_for_db)
 
         trade = Trade(
             surge_id=surge_id,
-            market_id=surge.market_id,
-            token_id=surge.token_id,
-            market_name=surge.market_name,
-            direction=surge.direction,
+            market_id=trend.market_id,
+            token_id=trend.token_id,
+            market_name=trend.market_name,
+            direction=Direction.UP,
             entry_price=entry_price,
             entry_fee=entry_fee,
-            entry_time=surge.timestamp,
+            entry_time=trend.timestamp,
             shares=shares,
             position_size=config.POSITION_SIZE,
         )
@@ -119,13 +124,13 @@ class PaperEngine:
 
         position = Position(
             id=trade_id,
-            market_id=surge.market_id,
-            token_id=surge.token_id,
-            market_name=surge.market_name,
-            direction=surge.direction,
+            market_id=trend.market_id,
+            token_id=trend.token_id,
+            market_name=trend.market_name,
+            direction=Direction.UP,
             entry_price=entry_price,
             entry_fee=entry_fee,
-            entry_time=surge.timestamp,
+            entry_time=trend.timestamp,
             shares=shares,
             position_size=config.POSITION_SIZE,
             trailing_peak=entry_price,
@@ -135,18 +140,19 @@ class PaperEngine:
         self._positions[trade_id] = position
 
         logger.info(
-            "ENTRY %s: %s @ %.2f (%d shares, fee=$%.2f) [balance=$%.2f]",
-            surge.direction.value.upper(),
-            surge.market_name[:30],
+            "TREND ENTRY: %s @ %.2f (%d surges, %.2f->%.2f, %d shares) [balance=$%.2f]",
+            trend.market_name[:30],
             entry_price,
+            trend.surge_count,
+            trend.first_surge_price,
+            trend.current_price,
             int(shares),
-            entry_fee,
             self._balance,
         )
 
         return position
 
-    def _validate_entry(self, surge: Surge, entry_price: float) -> Optional[str]:
+    def _validate_entry(self, trend: Trend, entry_price: float) -> Optional[str]:
         if self._paused:
             return "trading paused (daily loss limit)"
 
@@ -157,7 +163,7 @@ class PaperEngine:
             return f"max concurrent positions ({config.MAX_CONCURRENT_POSITIONS})"
 
         market_count = sum(
-            1 for p in self._positions.values() if p.market_id == surge.market_id
+            1 for p in self._positions.values() if p.market_id == trend.market_id
         )
         if market_count >= config.MAX_POSITIONS_PER_MARKET:
             return f"max positions per market ({config.MAX_POSITIONS_PER_MARKET})"
@@ -168,9 +174,6 @@ class PaperEngine:
         if self._daily_pnl <= -config.DAILY_LOSS_LIMIT:
             self._paused = True
             return f"daily loss limit (${config.DAILY_LOSS_LIMIT})"
-
-        if entry_price > config.MAX_ENTRY_PRICE_YES:
-            return f"entry too high ({entry_price:.2f} > {config.MAX_ENTRY_PRICE_YES})"
 
         return None
 
@@ -204,7 +207,7 @@ class PaperEngine:
             if mfe > pos.max_favorable_excursion:
                 pos.max_favorable_excursion = mfe
 
-            if pos.trailing_peak - midpoint >= config.TRAILING_STOP:
+            if pos.trailing_peak > 0 and (pos.trailing_peak - midpoint) / pos.trailing_peak >= config.TRAILING_STOP_PCT:
                 exit_reason = ExitReason.TRAILING_STOP
                 exit_price = best_bid
 

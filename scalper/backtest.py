@@ -194,8 +194,8 @@ async def simulate_params(
             favorable = peak - entry_price
             if favorable >= take_profit - entry_price and take_profit > entry_price:
                 sim_exit = take_profit
-            elif peak - trailing_stop > entry_price:
-                sim_exit = peak - trailing_stop
+            elif peak * (1 - trailing_stop) > entry_price:
+                sim_exit = peak * (1 - trailing_stop)
             else:
                 sim_exit = t.get("exit_price") or entry_price
             pnl = (sim_exit - entry_price) * shares - entry_fee - (

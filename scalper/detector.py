@@ -124,23 +124,22 @@ class TrendDetector:
             return None
 
         history = self._surge_history.get(token_id, [])
-        asc_len, first_price = _longest_ascending_subsequence(history)
+        asc_len, first_price, first_ts = _longest_ascending_subsequence(history)
 
         if asc_len < config.TREND_MIN_SURGES:
+            return None
+
+        market = self._token_to_market.get(token_id)
+        if market is None:
             return None
 
         self._trend_cooldowns[token_id] = timestamp
         self._trends_fired += 1
 
-        market = self._token_to_market.get(token_id)
-        market_id = market.condition_id if market else ""
-        market_name = market.name if market else "Unknown"
-
-        first_ts = history[0][0]
         trend = Trend(
-            market_id=market_id,
+            market_id=market.condition_id,
             token_id=token_id,
-            market_name=market_name,
+            market_name=market.name,
             surge_count=asc_len,
             first_surge_price=first_price,
             current_price=round(midpoint, 4),
@@ -150,7 +149,7 @@ class TrendDetector:
 
         logger.info(
             "TREND: %s — %d ascending surges, %.2f->%.2f over %.0fs",
-            market_name[:40],
+            market.name[:40],
             asc_len,
             first_price,
             midpoint,
@@ -193,7 +192,7 @@ class TrendDetector:
         )
         trending_tokens = sum(
             1 for history in self._surge_history.values()
-            if _longest_ascending_subsequence(history)[0] >= config.TREND_MIN_SURGES
+            if len(history) >= config.TREND_MIN_SURGES and _longest_ascending_subsequence(history)[0] >= config.TREND_MIN_SURGES
         )
         return {
             "surges_detected": self._surges_detected,
@@ -228,8 +227,8 @@ class TrendDetector:
 
 def _longest_ascending_subsequence(
     history: list[tuple[float, float]],
-) -> tuple[int, float]:
-    """Return (length, first_price) of the longest ascending subsequence by price.
+) -> tuple[int, float, float]:
+    """Return (length, first_price, first_timestamp) of the longest ascending subsequence.
 
     Finds non-consecutive ascending subsequences — pullbacks between
     surges are tolerated. E.g. [0.27, 0.37, 0.32, 0.40] -> [0.27, 0.37, 0.40] (length 3).
@@ -238,9 +237,10 @@ def _longest_ascending_subsequence(
     ascending chain. O(n^2) but n < 50 surges per token so irrelevant.
     """
     if not history:
-        return 0, 0.0
+        return 0, 0.0, 0.0
     best_len = 0
     best_first = 0.0
+    best_first_ts = 0.0
     for i in range(len(history)):
         chain_len = 1
         last_price = history[i][1]
@@ -251,4 +251,5 @@ def _longest_ascending_subsequence(
         if chain_len > best_len:
             best_len = chain_len
             best_first = history[i][1]
-    return best_len, best_first
+            best_first_ts = history[i][0]
+    return best_len, best_first, best_first_ts

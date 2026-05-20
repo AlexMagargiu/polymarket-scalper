@@ -263,7 +263,7 @@ async def backtest_simulate_handler(request):
         raise web.HTTPBadRequest(text="Invalid JSON body")
 
     threshold = body.get("threshold", config.SURGE_THRESHOLD)
-    trailing_stop = body.get("trailing_stop", config.TRAILING_STOP)
+    trailing_stop = body.get("trailing_stop", config.TRAILING_STOP_PCT)
     take_profit = body.get("take_profit", config.TAKE_PROFIT)
 
     try:

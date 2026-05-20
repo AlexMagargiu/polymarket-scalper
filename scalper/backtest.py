@@ -143,7 +143,7 @@ async def export_surges(use_existing_db: bool = False) -> list[dict]:
 
 async def simulate_params(
     threshold: float = config.SURGE_THRESHOLD,
-    trailing_stop: float = config.TRAILING_STOP,
+    trailing_stop: float = config.TRAILING_STOP_PCT,
     take_profit: float = config.TAKE_PROFIT,
     use_existing_db: bool = False,
 ) -> dict:
@@ -255,7 +255,7 @@ def cli():
     )
     parser.add_argument("--db", default=config.DB_PATH, help="Database path")
     parser.add_argument("--threshold", type=float, default=config.SURGE_THRESHOLD)
-    parser.add_argument("--trailing", type=float, default=config.TRAILING_STOP)
+    parser.add_argument("--trailing", type=float, default=config.TRAILING_STOP_PCT)
     parser.add_argument("--take-profit", type=float, default=config.TAKE_PROFIT)
     args = parser.parse_args()
 

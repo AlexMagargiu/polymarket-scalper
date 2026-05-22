@@ -27,6 +27,7 @@ class PaperEngine:
         self._paused: bool = False
         self._start_time: float = time.time()
         self._last_prices: dict[str, tuple[float, float]] = {}
+        self._last_update_time: dict[str, float] = {}
 
     async def init(self):
         self._balance = await db.get_balance()
@@ -74,17 +75,21 @@ class PaperEngine:
         entry_price = current_ask
 
         if current_bid < 0.02 or current_ask > 0.98:
-            logger.debug("Rejected resolving market %s (bid=%.2f ask=%.2f)", trend.market_name[:30], current_bid, current_ask)
+            logger.info("REJECTED %s: resolving market (bid=%.2f ask=%.2f)", trend.market_name[:40], current_bid, current_ask)
+            return None
+
+        if entry_price > config.MAX_ENTRY_PRICE:
+            logger.info("REJECTED %s: entry price %.2f > max %.2f", trend.market_name[:40], entry_price, config.MAX_ENTRY_PRICE)
             return None
 
         spread = current_ask - current_bid
         if spread > 0.15:
-            logger.debug("Rejected wide spread %s (spread=%.2f)", trend.market_name[:30], spread)
+            logger.info("REJECTED %s: wide spread %.2f", trend.market_name[:40], spread)
             return None
 
         rejection = self._validate_entry(trend, entry_price)
         if rejection:
-            logger.debug("Entry rejected for %s: %s", trend.market_name[:30], rejection)
+            logger.info("REJECTED %s: %s", trend.market_name[:40], rejection)
             return None
 
         shares = config.POSITION_SIZE / entry_price
@@ -186,6 +191,7 @@ class PaperEngine:
     ) -> list[Trade]:
         self._check_daily_reset()
         self._last_prices[token_id] = (best_bid, best_ask)
+        self._last_update_time[token_id] = timestamp
         midpoint = (best_bid + best_ask) / 2
 
         closed_trades: list[Trade] = []
@@ -293,6 +299,27 @@ class PaperEngine:
             peak_price=pos.trailing_peak,
             max_favorable_excursion=pos.max_favorable_excursion,
         )
+
+    async def close_stale_positions(self, now: float) -> list[Trade]:
+        closed: list[Trade] = []
+        for trade_id, pos in list(self._positions.items()):
+            last_update = self._last_update_time.get(pos.token_id, pos.entry_time)
+            if now - last_update < config.STALE_POSITION_TIMEOUT:
+                continue
+            last = self._last_prices.get(pos.token_id)
+            exit_price = last[0] if last else pos.entry_price
+            logger.warning(
+                "STALE CLOSE: %s — no update for %.0fs, closing at %.2f",
+                pos.market_name[:40],
+                now - last_update,
+                exit_price,
+            )
+            trade = await self._close_position(
+                trade_id, pos, exit_price, ExitReason.DISCONNECT, now
+            )
+            if trade:
+                closed.append(trade)
+        return closed
 
     async def on_disconnect(self) -> list[Trade]:
         if not self._positions:

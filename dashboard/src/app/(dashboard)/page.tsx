@@ -209,15 +209,15 @@ export default function OverviewPage() {
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         <KPICard
-          label="Surges (Up)"
-          value={detectorStats ? detectorStats.surges_up.toString() : null}
+          label="Surges Detected"
+          value={detectorStats ? detectorStats.surges_detected.toString() : null}
           tone="green"
           loading={!detectorStats}
         />
         <KPICard
-          label="Surges (Down)"
-          value={detectorStats ? detectorStats.surges_down.toString() : null}
-          tone="red"
+          label="Trends Fired"
+          value={detectorStats ? detectorStats.trends_fired.toString() : null}
+          tone="amber"
           loading={!detectorStats}
         />
         <KPICard

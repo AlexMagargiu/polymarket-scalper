@@ -10,7 +10,9 @@ TAKE_PROFIT = 0.90              # hard exit at 90c
 TREND_WINDOW = 900              # 15 minutes — how far back to look for surge history
 TREND_MIN_SURGES = 3            # minimum ascending surges to confirm a trend
 TREND_COOLDOWN = 300            # 5 minutes — don't re-enter same token after trend fires
-TRAILING_STOP_PCT = 0.30        # 30% reversal from peak triggers exit
+TRAILING_STOP_PCT = 0.10        # 10% reversal from peak triggers exit
+MAX_ENTRY_PRICE = 0.80          # refuse entries above 80c (no upside to 90c TP)
+STALE_POSITION_TIMEOUT = 7200   # 2 hours — close positions with no price updates
 
 # === Position / Risk Limits ===
 POSITION_SIZE = 25.0            # $25 per trade

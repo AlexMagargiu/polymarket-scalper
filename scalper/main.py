@@ -167,6 +167,9 @@ async def main():
             await asyncio.sleep(300)
             try:
                 detector.prune_stale_tokens()
+                closed = await engine.close_stale_positions(time.time())
+                for trade in closed:
+                    await notifier.send_exit(trade)
             except Exception:
                 logger.exception("Stale prune failed")
 

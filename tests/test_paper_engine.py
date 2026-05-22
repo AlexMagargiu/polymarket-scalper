@@ -121,17 +121,19 @@ async def test_trailing_stop_exit(engine):
     token_id = pos.token_id
 
     # entry at 0.26, peak becomes 0.40 (midpoint of 0.39/0.41)
-    # 30% of 0.40 = 0.12 drop needed → trigger at 0.40 - 0.12 = 0.28
+    # 10% of 0.40 = 0.04 drop needed → trigger at 0.36
     closed = await engine.on_price_update(token_id, 0.39, 0.41, time.time() + 10)
     assert len(closed) == 0
 
-    closed = await engine.on_price_update(token_id, 0.29, 0.31, time.time() + 20)
+    # midpoint 0.37 → (0.40-0.37)/0.40 = 7.5% < 10% → no trigger
+    closed = await engine.on_price_update(token_id, 0.36, 0.38, time.time() + 20)
     assert len(closed) == 0
 
-    closed = await engine.on_price_update(token_id, 0.26, 0.28, time.time() + 30)
+    # midpoint 0.35 → (0.40-0.35)/0.40 = 12.5% >= 10% → trigger
+    closed = await engine.on_price_update(token_id, 0.34, 0.36, time.time() + 30)
     assert len(closed) == 1
     assert closed[0].exit_reason == ExitReason.TRAILING_STOP
-    assert closed[0].exit_price == 0.26
+    assert closed[0].exit_price == 0.34
     assert closed[0].peak_price == pytest.approx(0.40, abs=0.01)
 
 
@@ -156,14 +158,14 @@ async def test_pnl_calculation_with_fees(engine):
     shares = config.POSITION_SIZE / entry_price
     entry_fee = config.POSITION_SIZE * config.TAKER_FEE_RATE
 
-    # Peak at midpoint 0.45; 30% of 0.45 = 0.135 → stop at 0.315
-    # Exit at bid=0.30 (midpoint 0.31 < 0.315)
-    exit_price = 0.30
+    # Peak at midpoint 0.45; 10% of 0.45 = 0.045 → stop at 0.405
+    # Exit at bid=0.39 (midpoint 0.40 < 0.405)
+    exit_price = 0.39
     exit_fee = shares * exit_price * config.TAKER_FEE_RATE
     expected_pnl = (exit_price - entry_price) * shares - entry_fee - exit_fee
 
     await engine.on_price_update(pos.token_id, 0.44, 0.46, time.time() + 10)
-    closed = await engine.on_price_update(pos.token_id, 0.30, 0.32, time.time() + 20)
+    closed = await engine.on_price_update(pos.token_id, 0.39, 0.41, time.time() + 20)
 
     assert len(closed) == 1
     assert closed[0].pnl == pytest.approx(expected_pnl, abs=0.05)
@@ -208,9 +210,9 @@ async def test_recovery_restores_daily_counters(tmp_path):
     pos = await eng1.on_trend(trend, current_bid=0.24, current_ask=0.25)
     assert pos is not None
 
-    # Peak at 0.45, 30% of 0.45 = 0.135 → stop at 0.315; midpoint 0.31 triggers
+    # Peak at 0.45, 10% of 0.45 = 0.045 → stop at 0.405; midpoint 0.40 triggers
     await eng1.on_price_update(pos.token_id, 0.44, 0.46, time.time() + 10)
-    closed = await eng1.on_price_update(pos.token_id, 0.30, 0.32, time.time() + 20)
+    closed = await eng1.on_price_update(pos.token_id, 0.39, 0.41, time.time() + 20)
     assert len(closed) == 1
 
     saved_pnl = eng1._daily_pnl
@@ -252,13 +254,40 @@ async def test_trailing_stop_percentage(engine):
     pos = await engine.on_trend(trend, current_bid=0.29, current_ask=0.31)
     assert pos is not None
 
+    # peak at midpoint 0.50; 10% of 0.50 = 0.05 → stop at 0.45
     closed = await engine.on_price_update("tok_yes", 0.49, 0.51, time.time() + 10)
     assert closed == []
 
-    closed = await engine.on_price_update("tok_yes", 0.39, 0.41, time.time() + 20)
+    # midpoint 0.46 → (0.50-0.46)/0.50 = 8% < 10% → no trigger
+    closed = await engine.on_price_update("tok_yes", 0.45, 0.47, time.time() + 20)
     assert closed == []
 
-    closed = await engine.on_price_update("tok_yes", 0.34, 0.36, time.time() + 30)
+    # midpoint 0.44 → (0.50-0.44)/0.50 = 12% >= 10% → trigger
+    closed = await engine.on_price_update("tok_yes", 0.43, 0.45, time.time() + 30)
     assert len(closed) == 1
     assert closed[0].exit_reason == ExitReason.TRAILING_STOP
-    assert closed[0].exit_price == 0.34
+    assert closed[0].exit_price == 0.43
+
+
+@pytest.mark.asyncio
+async def test_entry_rejected_max_entry_price(engine):
+    trend = _make_trend(current_price=0.85)
+    pos = await engine.on_trend(trend, current_bid=0.84, current_ask=0.86)
+    assert pos is None
+
+
+@pytest.mark.asyncio
+async def test_stale_position_closed(engine):
+    trend = _make_trend(current_price=0.30)
+    now = time.time()
+    pos = await engine.on_trend(trend, current_bid=0.29, current_ask=0.31)
+    assert pos is not None
+
+    await engine.on_price_update("tok_yes", 0.34, 0.36, now + 10)
+
+    closed = await engine.close_stale_positions(now + 100)
+    assert len(closed) == 0
+
+    closed = await engine.close_stale_positions(now + config.STALE_POSITION_TIMEOUT + 20)
+    assert len(closed) == 1
+    assert closed[0].exit_reason == ExitReason.DISCONNECT

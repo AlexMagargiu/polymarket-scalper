@@ -89,10 +89,11 @@ export interface WsStatus {
 }
 
 export interface DetectorStats {
-  surges_up: number;
-  surges_down: number;
+  surges_detected: number;
+  trends_fired: number;
   active_windows: number;
   cooldowns_active: number;
+  trending_tokens: number;
 }
 
 export interface DailyStats {

@@ -78,6 +78,7 @@ class Position:
     position_size: float = 0.0
     trailing_peak: float = 0.0
     max_favorable_excursion: float = 0.0
+    max_adverse_excursion: float = 0.0
     status: PositionStatus = PositionStatus.OPEN
     surge_id: Optional[int] = None
 

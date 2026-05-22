@@ -13,6 +13,7 @@ TREND_COOLDOWN = 300            # 5 minutes — don't re-enter same token after 
 TRAILING_STOP_PCT = 0.10        # 10% reversal from peak triggers exit
 MAX_ENTRY_PRICE = 0.80          # refuse entries above 80c (no upside to 90c TP)
 STALE_POSITION_TIMEOUT = 7200   # 2 hours — close positions with no price updates
+TRAILING_STOP_GRACE = 30        # seconds — don't check trailing stop for first 30s after entry
 
 # === Position / Risk Limits ===
 POSITION_SIZE = 25.0            # $25 per trade

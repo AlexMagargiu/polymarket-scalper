@@ -9,7 +9,6 @@ from scalper.models import (
     ExitReason,
     Position,
     PositionStatus,
-    Surge,
     Trend,
     Trade,
 )
@@ -69,43 +68,35 @@ class PaperEngine:
         trend: Trend,
         current_bid: float,
         current_ask: float,
-    ) -> Optional[Position]:
+        surge_id: Optional[int] = None,
+    ) -> tuple[Optional[Position], Optional[str]]:
         self._check_daily_reset()
 
         entry_price = current_ask
 
         if current_bid < 0.02 or current_ask > 0.98:
-            logger.info("REJECTED %s: resolving market (bid=%.2f ask=%.2f)", trend.market_name[:40], current_bid, current_ask)
-            return None
+            reason = f"resolving market (bid={current_bid:.2f} ask={current_ask:.2f})"
+            logger.info("REJECTED %s: %s", trend.market_name[:40], reason)
+            return None, reason
 
         if entry_price > config.MAX_ENTRY_PRICE:
-            logger.info("REJECTED %s: entry price %.2f > max %.2f", trend.market_name[:40], entry_price, config.MAX_ENTRY_PRICE)
-            return None
+            reason = f"entry price {entry_price:.2f} > max {config.MAX_ENTRY_PRICE:.2f}"
+            logger.info("REJECTED %s: %s", trend.market_name[:40], reason)
+            return None, reason
 
         spread = current_ask - current_bid
         if spread > 0.15:
-            logger.info("REJECTED %s: wide spread %.2f", trend.market_name[:40], spread)
-            return None
+            reason = f"wide spread {spread:.2f}"
+            logger.info("REJECTED %s: %s", trend.market_name[:40], reason)
+            return None, reason
 
         rejection = self._validate_entry(trend, entry_price)
         if rejection:
             logger.info("REJECTED %s: %s", trend.market_name[:40], rejection)
-            return None
+            return None, rejection
 
         shares = config.POSITION_SIZE / entry_price
         entry_fee = config.POSITION_SIZE * config.TAKER_FEE_RATE
-
-        surge_for_db = Surge(
-            market_id=trend.market_id,
-            token_id=trend.token_id,
-            market_name=trend.market_name,
-            direction=Direction.UP,
-            magnitude=round(trend.current_price - trend.first_surge_price, 4),
-            window_seconds=trend.window_seconds,
-            price_at_detection=trend.current_price,
-            timestamp=trend.timestamp,
-        )
-        surge_id = await db.log_surge(surge_for_db)
 
         trade = Trade(
             surge_id=surge_id,
@@ -119,7 +110,9 @@ class PaperEngine:
             shares=shares,
             position_size=config.POSITION_SIZE,
         )
-        trade_id = await db.log_trade_entry(trade)
+        trade_id = await db.log_trade_entry(
+            trade, entry_bid=current_bid, entry_spread=round(spread, 4)
+        )
 
         cost = config.POSITION_SIZE + entry_fee
         self._balance -= cost
@@ -138,7 +131,7 @@ class PaperEngine:
             entry_time=trend.timestamp,
             shares=shares,
             position_size=config.POSITION_SIZE,
-            trailing_peak=entry_price,
+            trailing_peak=(current_bid + current_ask) / 2,
             status=PositionStatus.OPEN,
             surge_id=surge_id,
         )
@@ -155,7 +148,7 @@ class PaperEngine:
             self._balance,
         )
 
-        return position
+        return position, None
 
     def _validate_entry(self, trend: Trend, entry_price: float) -> Optional[str]:
         if self._paused:
@@ -213,7 +206,12 @@ class PaperEngine:
             if mfe > pos.max_favorable_excursion:
                 pos.max_favorable_excursion = mfe
 
-            if pos.trailing_peak > 0 and (pos.trailing_peak - midpoint) / pos.trailing_peak >= config.TRAILING_STOP_PCT:
+            mae = pos.entry_price - midpoint
+            if mae > pos.max_adverse_excursion:
+                pos.max_adverse_excursion = mae
+
+            hold_time = timestamp - pos.entry_time
+            if hold_time >= config.TRAILING_STOP_GRACE and pos.trailing_peak > 0 and (pos.trailing_peak - midpoint) / pos.trailing_peak >= config.TRAILING_STOP_PCT:
                 exit_reason = ExitReason.TRAILING_STOP
                 exit_price = best_bid
 
@@ -252,6 +250,7 @@ class PaperEngine:
             pnl=pnl,
             peak_price=pos.trailing_peak,
             max_favorable=pos.max_favorable_excursion,
+            max_adverse=pos.max_adverse_excursion,
         )
 
         proceeds = pos.shares * exit_price - exit_fee

@@ -1,5 +1,5 @@
 import aiosqlite
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from scalper import config
@@ -50,7 +50,55 @@ CREATE TABLE IF NOT EXISTS balance_log (
     change REAL NOT NULL,
     reason TEXT
 );
+
+CREATE TABLE IF NOT EXISTS tracked_tokens (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    token_id TEXT NOT NULL,
+    market_id TEXT NOT NULL,
+    market_name TEXT,
+    reason TEXT NOT NULL,
+    start_time TEXT NOT NULL,
+    resolved_at TEXT,
+    resolution_price REAL
+);
+
+CREATE TABLE IF NOT EXISTS price_history (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    token_id TEXT NOT NULL,
+    timestamp TEXT NOT NULL,
+    midpoint REAL NOT NULL,
+    bid REAL NOT NULL,
+    ask REAL NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_price_history_token_ts ON price_history(token_id, timestamp);
+
+CREATE TABLE IF NOT EXISTS trends (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    timestamp TEXT NOT NULL,
+    token_id TEXT NOT NULL,
+    market_id TEXT NOT NULL,
+    market_name TEXT,
+    surge_count INTEGER NOT NULL,
+    first_surge_price REAL NOT NULL,
+    current_price REAL NOT NULL,
+    window_seconds REAL NOT NULL,
+    entered INTEGER DEFAULT 0,
+    rejection_reason TEXT,
+    entry_bid REAL,
+    entry_ask REAL
+);
 """
+
+
+_MIGRATIONS = [
+    "ALTER TABLE trades ADD COLUMN entry_bid REAL",
+    "ALTER TABLE trades ADD COLUMN entry_spread REAL",
+    "ALTER TABLE trades ADD COLUMN config_trailing_pct REAL",
+    "ALTER TABLE trades ADD COLUMN config_max_entry REAL",
+    "ALTER TABLE trades ADD COLUMN config_trend_min_surges INTEGER",
+    "ALTER TABLE trades ADD COLUMN max_adverse_excursion REAL",
+]
 
 
 def _ts_to_iso(ts: float) -> str:
@@ -82,6 +130,13 @@ async def init_db(path: str = None) -> aiosqlite.Connection:
     _db.row_factory = aiosqlite.Row
     await _db.execute("PRAGMA journal_mode=WAL")
     await _db.executescript(_SCHEMA)
+    await _db.commit()
+
+    for migration in _MIGRATIONS:
+        try:
+            await _db.execute(migration)
+        except Exception:
+            pass  # column already exists
     await _db.commit()
 
     cursor = await _db.execute("SELECT COUNT(*) FROM balance_log")
@@ -129,11 +184,15 @@ async def mark_surge_traded(surge_id: int):
     await db.commit()
 
 
-async def log_trade_entry(trade: Trade) -> int:
+async def log_trade_entry(trade: Trade, entry_bid: float = None, entry_spread: float = None) -> int:
     db = await get_db()
+    config_trailing_pct = config.TRAILING_STOP_PCT
+    config_max_entry = config.MAX_ENTRY_PRICE
+    config_trend_min_surges = config.TREND_MIN_SURGES
     cursor = await db.execute(
-        """INSERT INTO trades (surge_id, market_id, token_id, market_name, direction, entry_price, entry_fee, entry_time, shares, position_size)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        """INSERT INTO trades (surge_id, market_id, token_id, market_name, direction, entry_price, entry_fee, entry_time, shares, position_size,
+           entry_bid, entry_spread, config_trailing_pct, config_max_entry, config_trend_min_surges)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         (
             trade.surge_id,
             trade.market_id,
@@ -145,6 +204,11 @@ async def log_trade_entry(trade: Trade) -> int:
             _ts_to_iso(trade.entry_time),
             trade.shares,
             trade.position_size,
+            entry_bid,
+            entry_spread,
+            config_trailing_pct,
+            config_max_entry,
+            config_trend_min_surges,
         ),
     )
     await db.commit()
@@ -162,10 +226,11 @@ async def log_trade_exit(
     pnl: float,
     peak_price: float,
     max_favorable: float,
+    max_adverse: float = None,
 ):
     db = await get_db()
     await db.execute(
-        """UPDATE trades SET exit_price = ?, exit_fee = ?, exit_time = ?, exit_reason = ?, pnl = ?, peak_price = ?, max_favorable_excursion = ?
+        """UPDATE trades SET exit_price = ?, exit_fee = ?, exit_time = ?, exit_reason = ?, pnl = ?, peak_price = ?, max_favorable_excursion = ?, max_adverse_excursion = ?
            WHERE id = ?""",
         (
             exit_price,
@@ -175,6 +240,7 @@ async def log_trade_exit(
             pnl,
             peak_price,
             max_favorable,
+            max_adverse,
             trade_id,
         ),
     )
@@ -288,3 +354,118 @@ async def get_trade_stats() -> dict:
         "today_pnl": today_pnl,
         "today_trades": today_trades,
     }
+
+
+async def log_trend(trend_data: dict) -> int:
+    db = await get_db()
+    cursor = await db.execute(
+        """INSERT INTO trends (timestamp, token_id, market_id, market_name, surge_count,
+           first_surge_price, current_price, window_seconds, entered, rejection_reason,
+           entry_bid, entry_ask)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        (
+            trend_data["timestamp"],
+            trend_data["token_id"],
+            trend_data["market_id"],
+            trend_data["market_name"],
+            trend_data["surge_count"],
+            trend_data["first_surge_price"],
+            trend_data["current_price"],
+            trend_data["window_seconds"],
+            trend_data["entered"],
+            trend_data.get("rejection_reason"),
+            trend_data.get("entry_bid"),
+            trend_data.get("entry_ask"),
+        ),
+    )
+    await db.commit()
+    return cursor.lastrowid
+
+
+async def add_tracked_token(token_id: str, market_id: str, market_name: str, reason: str, start_time: str):
+    db = await get_db()
+    # Don't add if already tracked and unresolved
+    cursor = await db.execute(
+        "SELECT id FROM tracked_tokens WHERE token_id = ? AND resolved_at IS NULL",
+        (token_id,),
+    )
+    if await cursor.fetchone():
+        return
+    await db.execute(
+        "INSERT INTO tracked_tokens (token_id, market_id, market_name, reason, start_time) VALUES (?, ?, ?, ?, ?)",
+        (token_id, market_id, market_name, reason, start_time),
+    )
+    await db.commit()
+
+
+async def resolve_tracked_token(token_id: str, resolution_price: float, resolved_at: str):
+    db = await get_db()
+    await db.execute(
+        "UPDATE tracked_tokens SET resolved_at = ?, resolution_price = ? WHERE token_id = ? AND resolved_at IS NULL",
+        (resolved_at, resolution_price, token_id),
+    )
+    await db.commit()
+
+
+async def get_unresolved_tracked_tokens() -> list[dict]:
+    db = await get_db()
+    cursor = await db.execute("SELECT * FROM tracked_tokens WHERE resolved_at IS NULL")
+    rows = await cursor.fetchall()
+    return [row_to_dict(r) for r in rows]
+
+
+async def log_price_snapshots_batch(snapshots: list[tuple]):
+    """Insert batch of (token_id, timestamp_iso, midpoint, bid, ask) tuples."""
+    if not snapshots:
+        return
+    db = await get_db()
+    await db.executemany(
+        "INSERT INTO price_history (token_id, timestamp, midpoint, bid, ask) VALUES (?, ?, ?, ?, ?)",
+        snapshots,
+    )
+    await db.commit()
+
+
+async def purge_old_data(retention_days: int = 60):
+    """Delete price_history, resolved tracked_tokens, and old surges older than retention_days."""
+    db = await get_db()
+    cutoff = datetime.now(timezone.utc) - timedelta(days=retention_days)
+    cutoff_iso = cutoff.isoformat()
+    await db.execute("DELETE FROM price_history WHERE timestamp < ?", (cutoff_iso,))
+    await db.execute("DELETE FROM tracked_tokens WHERE resolved_at IS NOT NULL AND resolved_at < ?", (cutoff_iso,))
+    await db.execute("UPDATE trades SET surge_id = NULL WHERE surge_id IN (SELECT id FROM surges WHERE timestamp < ?)", (cutoff_iso,))
+    await db.execute("DELETE FROM surges WHERE timestamp < ?", (cutoff_iso,))
+    await db.execute("DELETE FROM trends WHERE timestamp < ?", (cutoff_iso,))
+    await db.commit()
+
+
+async def get_price_history(token_id: str, limit: int = 10000) -> list[dict]:
+    db = await get_db()
+    cursor = await db.execute(
+        "SELECT * FROM price_history WHERE token_id = ? ORDER BY timestamp LIMIT ?",
+        (token_id, limit),
+    )
+    rows = await cursor.fetchall()
+    return [row_to_dict(r) for r in rows]
+
+
+async def get_all_trends(limit: int = 100, offset: int = 0) -> list[dict]:
+    db = await get_db()
+    cursor = await db.execute(
+        "SELECT * FROM trends ORDER BY id DESC LIMIT ? OFFSET ?",
+        (limit, offset),
+    )
+    rows = await cursor.fetchall()
+    return [row_to_dict(r) for r in rows]
+
+
+async def get_tracked_tokens(resolved: bool = None, limit: int = 100) -> list[dict]:
+    db = await get_db()
+    if resolved is None:
+        cursor = await db.execute("SELECT * FROM tracked_tokens ORDER BY id DESC LIMIT ?", (limit,))
+    elif resolved:
+        cursor = await db.execute("SELECT * FROM tracked_tokens WHERE resolved_at IS NOT NULL ORDER BY id DESC LIMIT ?", (limit,))
+    else:
+        cursor = await db.execute("SELECT * FROM tracked_tokens WHERE resolved_at IS NULL ORDER BY id DESC LIMIT ?", (limit,))
+    rows = await cursor.fetchall()
+    return [row_to_dict(r) for r in rows]

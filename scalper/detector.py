@@ -29,7 +29,7 @@ class TrendDetector:
         best_bid: float,
         best_ask: float,
         timestamp: float,
-    ) -> Optional[Trend]:
+    ) -> tuple[Optional[Surge], Optional[Trend]]:
         midpoint = (best_bid + best_ask) / 2
         point = PricePoint(
             timestamp=timestamp,
@@ -50,9 +50,9 @@ class TrendDetector:
         surge = self._check_surge(token_id, midpoint, timestamp)
         if surge:
             self._record_surge(token_id, surge, timestamp)
-            return self._check_trend(token_id, midpoint, timestamp)
+            return surge, self._check_trend(token_id, midpoint, timestamp)
 
-        return None
+        return None, None
 
     def _check_surge(self, token_id: str, midpoint: float, timestamp: float) -> Optional[Surge]:
         window = self._windows[token_id]

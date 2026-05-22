@@ -1,0 +1,92 @@
+import logging
+import time
+from typing import Optional
+
+from scalper import db
+
+logger = logging.getLogger(__name__)
+
+SNAPSHOT_INTERVAL = 5      # seconds between price snapshots
+FLUSH_INTERVAL = 30        # seconds between DB batch writes
+RESOLUTION_BID = 0.02      # bid below this = resolved NO
+RESOLUTION_ASK = 0.98      # ask above this = resolved YES
+
+
+class PriceTracker:
+    def __init__(self):
+        self._tracked: set[str] = set()  # token_ids currently being tracked
+        self._last_snapshot: dict[str, float] = {}  # token_id -> last snapshot timestamp
+        self._pending: list[tuple] = []  # buffered snapshots to flush
+        self._last_flush: float = 0.0
+
+    async def init(self):
+        """Load unresolved tracked tokens from DB on startup."""
+        rows = await db.get_unresolved_tracked_tokens()
+        for row in rows:
+            self._tracked.add(row["token_id"])
+        if self._tracked:
+            logger.info("Tracker loaded %d unresolved tokens", len(self._tracked))
+
+    async def track(self, token_id: str, market_id: str, market_name: str, reason: str, timestamp: float):
+        """Start tracking a token. Called when surge/trend detected or trade entered."""
+        if token_id in self._tracked:
+            return
+        self._tracked.add(token_id)
+        await db.add_tracked_token(
+            token_id, market_id, market_name, reason,
+            db._ts_to_iso(timestamp),
+        )
+
+    async def on_price_update(self, token_id: str, bid: float, ask: float, timestamp: float):
+        """Record price snapshot if tracked and interval elapsed. Detect resolution."""
+        if token_id not in self._tracked:
+            return
+
+        midpoint = (bid + ask) / 2
+
+        # Check if market resolved
+        if bid < RESOLUTION_BID or ask > RESOLUTION_ASK:
+            await self._flush()
+            self._last_flush = timestamp
+            resolution_price = midpoint
+            await db.resolve_tracked_token(token_id, resolution_price, db._ts_to_iso(timestamp))
+            self._tracked.discard(token_id)
+            self._last_snapshot.pop(token_id, None)
+            logger.info(
+                "RESOLVED: token %s...%s at %.2f",
+                token_id[:8], token_id[-4:], resolution_price,
+            )
+            return
+
+        # Snapshot at interval
+        last = self._last_snapshot.get(token_id, 0)
+        if timestamp - last >= SNAPSHOT_INTERVAL:
+            self._last_snapshot[token_id] = timestamp
+            self._pending.append((
+                token_id,
+                db._ts_to_iso(timestamp),
+                round(midpoint, 6),
+                round(bid, 6),
+                round(ask, 6),
+            ))
+
+        # Periodic flush
+        if timestamp - self._last_flush >= FLUSH_INTERVAL:
+            await self._flush()
+            self._last_flush = timestamp
+
+    async def _flush(self):
+        if not self._pending:
+            return
+        await db.log_price_snapshots_batch(self._pending)
+        self._pending.clear()
+
+    async def flush(self):
+        """Public flush for shutdown."""
+        await self._flush()
+
+    def get_stats(self) -> dict:
+        return {
+            "tracked_tokens": len(self._tracked),
+            "pending_snapshots": len(self._pending),
+        }

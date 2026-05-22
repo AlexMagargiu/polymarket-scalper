@@ -23,6 +23,7 @@ from scalper.markets import (
 )
 from scalper.paper_engine import PaperEngine
 from scalper.telegram import TelegramNotifier
+from scalper.tracker import PriceTracker
 from scalper.websocket import (
     BestBidAskEvent,
     BookSnapshotEvent,
@@ -46,7 +47,9 @@ async def main():
     notifier = TelegramNotifier()
     detector = TrendDetector()
     engine = PaperEngine()
+    tracker = PriceTracker()
     await engine.init()
+    await tracker.init()
 
     app = await create_api_app()
     api_runner = await start_api(app)
@@ -80,7 +83,19 @@ async def main():
     async def on_event(event):
         try:
             if isinstance(event, BestBidAskEvent):
-                trend = detector.on_price_update(
+                surge, trend = detector.on_price_update(
+                    event.asset_id, event.best_bid, event.best_ask, event.timestamp
+                )
+
+                surge_id = None
+                if surge:
+                    surge_id = await db.log_surge(surge)
+                    await tracker.track(
+                        event.asset_id, surge.market_id, surge.market_name,
+                        "surge", event.timestamp,
+                    )
+
+                await tracker.on_price_update(
                     event.asset_id, event.best_bid, event.best_ask, event.timestamp
                 )
 
@@ -91,16 +106,33 @@ async def main():
                     await notifier.send_exit(trade)
 
                 if trend:
-                    position = await engine.on_trend(
-                        trend, event.best_bid, event.best_ask
+                    position, rejection = await engine.on_trend(
+                        trend, event.best_bid, event.best_ask, surge_id=surge_id
+                    )
+                    entered = position is not None
+                    await db.log_trend({
+                        "timestamp": db._ts_to_iso(trend.timestamp),
+                        "token_id": trend.token_id,
+                        "market_id": trend.market_id,
+                        "market_name": trend.market_name,
+                        "surge_count": trend.surge_count,
+                        "first_surge_price": trend.first_surge_price,
+                        "current_price": trend.current_price,
+                        "window_seconds": trend.window_seconds,
+                        "entered": 1 if entered else 0,
+                        "rejection_reason": rejection,
+                        "entry_bid": event.best_bid,
+                        "entry_ask": event.best_ask,
+                    })
+                    await tracker.track(
+                        event.asset_id, trend.market_id, trend.market_name,
+                        "traded" if entered else "trend_rejected", event.timestamp,
                     )
                     if position:
                         await notifier.send_entry(position)
 
             elif isinstance(event, BookSnapshotEvent):
-                detector.on_price_update(
-                    event.asset_id, event.best_bid, event.best_ask, event.timestamp
-                )
+                pass
 
             elif isinstance(event, LastTradePriceEvent):
                 detector.on_trade(
@@ -173,6 +205,15 @@ async def main():
             except Exception:
                 logger.exception("Stale prune failed")
 
+    async def purge_task():
+        while True:
+            await asyncio.sleep(86400)  # once per day
+            try:
+                await db.purge_old_data(retention_days=60)
+                logger.info("Purged data older than 60 days")
+            except Exception:
+                logger.exception("Purge failed")
+
     shutdown_event = asyncio.Event()
 
     loop = asyncio.get_running_loop()
@@ -185,6 +226,7 @@ async def main():
         asyncio.create_task(status_reporter_task(), name="status_reporter"),
         asyncio.create_task(daily_summary_task(), name="daily_summary"),
         asyncio.create_task(stale_pruner_task(), name="stale_pruner"),
+        asyncio.create_task(purge_task(), name="purge"),
     ]
 
     await shutdown_event.wait()
@@ -199,6 +241,7 @@ async def main():
     for trade in closed:
         await notifier.send_exit(trade)
 
+    await tracker.flush()
     await ws.close()
     await api_runner.cleanup()
     await db.close_db()

@@ -15,43 +15,47 @@ def _make_market(token_yes="tok_yes"):
 
 def _feed_surge(det, token_id, bid, ask, timestamp):
     """Feed a price update that should register as a surge.
-    Seeds a low price 40s earlier, then fires the high price."""
+    Seeds a low price 40s earlier, then fires the high price.
+    Returns (surge, trend) tuple."""
     low_bid = bid - 0.12
     low_ask = ask - 0.12
     det.on_price_update(token_id, low_bid, low_ask, timestamp - 40)
-    return det.on_price_update(token_id, bid, ask, timestamp)
+    surge, trend = det.on_price_update(token_id, bid, ask, timestamp)
+    return surge, trend
 
 
 def test_single_surge_no_trend():
     det = TrendDetector(token_to_market=_make_market())
-    result = _feed_surge(det, "tok_yes", 0.29, 0.31, 1000.0)
-    assert result is None
+    surge, trend = _feed_surge(det, "tok_yes", 0.29, 0.31, 1000.0)
+    assert surge is not None
+    assert trend is None
 
 
 def test_two_surges_no_trend():
     det = TrendDetector(token_to_market=_make_market())
     _feed_surge(det, "tok_yes", 0.29, 0.31, 1000.0)
-    result = _feed_surge(det, "tok_yes", 0.39, 0.41, 1060.0)
-    assert result is None
+    surge, trend = _feed_surge(det, "tok_yes", 0.39, 0.41, 1060.0)
+    assert surge is not None
+    assert trend is None
 
 
 def test_three_ascending_surges_triggers_trend():
     det = TrendDetector(token_to_market=_make_market())
     _feed_surge(det, "tok_yes", 0.19, 0.21, 1000.0)
     _feed_surge(det, "tok_yes", 0.29, 0.31, 1060.0)
-    result = _feed_surge(det, "tok_yes", 0.39, 0.41, 1120.0)
-    assert result is not None
-    assert result.surge_count >= 3
-    assert result.market_name == "Test Market"
-    assert result.first_surge_price < result.current_price
+    surge, trend = _feed_surge(det, "tok_yes", 0.39, 0.41, 1120.0)
+    assert trend is not None
+    assert trend.surge_count >= 3
+    assert trend.market_name == "Test Market"
+    assert trend.first_surge_price < trend.current_price
 
 
 def test_three_surges_not_ascending_no_trend():
     det = TrendDetector(token_to_market=_make_market())
     _feed_surge(det, "tok_yes", 0.29, 0.31, 1000.0)
     _feed_surge(det, "tok_yes", 0.39, 0.41, 1060.0)
-    result = _feed_surge(det, "tok_yes", 0.24, 0.26, 1120.0)
-    assert result is None
+    surge, trend = _feed_surge(det, "tok_yes", 0.24, 0.26, 1120.0)
+    assert trend is None
 
 
 def test_staircase_with_pullback_triggers_trend():
@@ -59,27 +63,27 @@ def test_staircase_with_pullback_triggers_trend():
     _feed_surge(det, "tok_yes", 0.26, 0.28, 1000.0)
     _feed_surge(det, "tok_yes", 0.36, 0.38, 1060.0)
     _feed_surge(det, "tok_yes", 0.31, 0.33, 1120.0)
-    result = _feed_surge(det, "tok_yes", 0.39, 0.41, 1180.0)
-    assert result is not None
-    assert result.surge_count >= 3
+    surge, trend = _feed_surge(det, "tok_yes", 0.39, 0.41, 1180.0)
+    assert trend is not None
+    assert trend.surge_count >= 3
 
 
 def test_trend_cooldown_prevents_duplicate():
     det = TrendDetector(token_to_market=_make_market())
     _feed_surge(det, "tok_yes", 0.19, 0.21, 1000.0)
     _feed_surge(det, "tok_yes", 0.29, 0.31, 1060.0)
-    result1 = _feed_surge(det, "tok_yes", 0.39, 0.41, 1120.0)
-    assert result1 is not None
-    result2 = _feed_surge(det, "tok_yes", 0.49, 0.51, 1180.0)
-    assert result2 is None
+    surge1, trend1 = _feed_surge(det, "tok_yes", 0.39, 0.41, 1120.0)
+    assert trend1 is not None
+    surge2, trend2 = _feed_surge(det, "tok_yes", 0.49, 0.51, 1180.0)
+    assert trend2 is None
 
 
 def test_surge_history_pruned_after_window():
     det = TrendDetector(token_to_market=_make_market())
     _feed_surge(det, "tok_yes", 0.19, 0.21, 1000.0)
     _feed_surge(det, "tok_yes", 0.29, 0.31, 1060.0)
-    result = _feed_surge(det, "tok_yes", 0.39, 0.41, 1961.0)
-    assert result is None
+    surge, trend = _feed_surge(det, "tok_yes", 0.39, 0.41, 1961.0)
+    assert trend is None
 
 
 def test_separate_tokens_independent():
@@ -90,10 +94,10 @@ def test_separate_tokens_independent():
     det = TrendDetector(token_to_market=token_map)
     _feed_surge(det, "tok_a", 0.19, 0.21, 1000.0)
     _feed_surge(det, "tok_a", 0.29, 0.31, 1060.0)
-    result_a = _feed_surge(det, "tok_a", 0.39, 0.41, 1120.0)
-    result_b = _feed_surge(det, "tok_b", 0.29, 0.31, 1120.0)
-    assert result_a is not None
-    assert result_b is None
+    surge_a, trend_a = _feed_surge(det, "tok_a", 0.39, 0.41, 1120.0)
+    surge_b, trend_b = _feed_surge(det, "tok_b", 0.29, 0.31, 1120.0)
+    assert trend_a is not None
+    assert trend_b is None
 
 
 def test_prune_stale_tokens():

@@ -63,9 +63,10 @@ def _make_trend(
 @pytest.mark.asyncio
 async def test_successful_entry(engine):
     trend = _make_trend(current_price=0.30)
-    pos = await engine.on_trend(trend, current_bid=0.29, current_ask=0.31)
+    pos, rejection = await engine.on_trend(trend, current_bid=0.29, current_ask=0.31)
 
     assert pos is not None
+    assert rejection is None
     assert pos.direction == Direction.UP
     assert pos.entry_price == 0.31
     assert pos.shares == pytest.approx(config.POSITION_SIZE / 0.31, rel=0.01)
@@ -80,8 +81,9 @@ async def test_successful_entry(engine):
 async def test_entry_rejected_insufficient_balance(engine):
     engine._balance = 10.0
     trend = _make_trend()
-    pos = await engine.on_trend(trend, current_bid=0.29, current_ask=0.31)
+    pos, rejection = await engine.on_trend(trend, current_bid=0.29, current_ask=0.31)
     assert pos is None
+    assert rejection is not None
 
 
 @pytest.mark.asyncio
@@ -92,45 +94,47 @@ async def test_entry_rejected_max_concurrent(engine):
             market_id=f"cond_{i}",
             market_name=f"Market {i}",
         )
-        pos = await engine.on_trend(trend, current_bid=0.29, current_ask=0.31)
+        pos, _ = await engine.on_trend(trend, current_bid=0.29, current_ask=0.31)
         assert pos is not None
 
     trend = _make_trend(token_id="tok_extra", market_id="cond_extra")
-    pos = await engine.on_trend(trend, current_bid=0.29, current_ask=0.31)
+    pos, rejection = await engine.on_trend(trend, current_bid=0.29, current_ask=0.31)
     assert pos is None
+    assert rejection is not None
 
 
 @pytest.mark.asyncio
 async def test_entry_rejected_resolving_market(engine):
     # bid near 0 — resolving
     trend = _make_trend(current_price=0.01)
-    pos = await engine.on_trend(trend, current_bid=0.01, current_ask=0.03)
+    pos, _ = await engine.on_trend(trend, current_bid=0.01, current_ask=0.03)
     assert pos is None
 
     # ask near 1 — resolving
     trend = _make_trend(current_price=0.98)
-    pos = await engine.on_trend(trend, current_bid=0.96, current_ask=0.99)
+    pos, _ = await engine.on_trend(trend, current_bid=0.96, current_ask=0.99)
     assert pos is None
 
 
 @pytest.mark.asyncio
 async def test_trailing_stop_exit(engine):
     trend = _make_trend(current_price=0.25)
-    pos = await engine.on_trend(trend, current_bid=0.24, current_ask=0.26)
+    pos, _ = await engine.on_trend(trend, current_bid=0.24, current_ask=0.26)
     assert pos is not None
     token_id = pos.token_id
 
-    # entry at 0.26, peak becomes 0.40 (midpoint of 0.39/0.41)
+    # entry at 0.26 (ask), trailing_peak = midpoint 0.25
+    # peak becomes 0.40 (midpoint of 0.39/0.41)
     # 10% of 0.40 = 0.04 drop needed → trigger at 0.36
-    closed = await engine.on_price_update(token_id, 0.39, 0.41, time.time() + 10)
+    closed = await engine.on_price_update(token_id, 0.39, 0.41, time.time() + 35)
     assert len(closed) == 0
 
     # midpoint 0.37 → (0.40-0.37)/0.40 = 7.5% < 10% → no trigger
-    closed = await engine.on_price_update(token_id, 0.36, 0.38, time.time() + 20)
+    closed = await engine.on_price_update(token_id, 0.36, 0.38, time.time() + 40)
     assert len(closed) == 0
 
-    # midpoint 0.35 → (0.40-0.35)/0.40 = 12.5% >= 10% → trigger
-    closed = await engine.on_price_update(token_id, 0.34, 0.36, time.time() + 30)
+    # midpoint 0.35 → (0.40-0.35)/0.40 = 12.5% >= 10% → trigger (past 30s grace)
+    closed = await engine.on_price_update(token_id, 0.34, 0.36, time.time() + 45)
     assert len(closed) == 1
     assert closed[0].exit_reason == ExitReason.TRAILING_STOP
     assert closed[0].exit_price == 0.34
@@ -140,7 +144,7 @@ async def test_trailing_stop_exit(engine):
 @pytest.mark.asyncio
 async def test_take_profit_exit(engine):
     trend = _make_trend(current_price=0.25)
-    pos = await engine.on_trend(trend, current_bid=0.24, current_ask=0.26)
+    pos, _ = await engine.on_trend(trend, current_bid=0.24, current_ask=0.26)
     token_id = pos.token_id
 
     closed = await engine.on_price_update(token_id, 0.90, 0.92, time.time() + 60)
@@ -151,7 +155,7 @@ async def test_take_profit_exit(engine):
 @pytest.mark.asyncio
 async def test_pnl_calculation_with_fees(engine):
     trend = _make_trend(current_price=0.25)
-    pos = await engine.on_trend(trend, current_bid=0.24, current_ask=0.25)
+    pos, _ = await engine.on_trend(trend, current_bid=0.24, current_ask=0.25)
     assert pos is not None
 
     entry_price = 0.25
@@ -164,8 +168,8 @@ async def test_pnl_calculation_with_fees(engine):
     exit_fee = shares * exit_price * config.TAKER_FEE_RATE
     expected_pnl = (exit_price - entry_price) * shares - entry_fee - exit_fee
 
-    await engine.on_price_update(pos.token_id, 0.44, 0.46, time.time() + 10)
-    closed = await engine.on_price_update(pos.token_id, 0.39, 0.41, time.time() + 20)
+    await engine.on_price_update(pos.token_id, 0.44, 0.46, time.time() + 35)
+    closed = await engine.on_price_update(pos.token_id, 0.39, 0.41, time.time() + 40)
 
     assert len(closed) == 1
     assert closed[0].pnl == pytest.approx(expected_pnl, abs=0.05)
@@ -175,12 +179,13 @@ async def test_pnl_calculation_with_fees(engine):
 async def test_multiple_positions_same_market(engine):
     for i in range(config.MAX_POSITIONS_PER_MARKET):
         trend = _make_trend(timestamp=time.time() + i * 61)
-        pos = await engine.on_trend(trend, current_bid=0.29, current_ask=0.31)
+        pos, _ = await engine.on_trend(trend, current_bid=0.29, current_ask=0.31)
         assert pos is not None
 
     trend = _make_trend(timestamp=time.time() + 200)
-    pos = await engine.on_trend(trend, current_bid=0.29, current_ask=0.31)
+    pos, rejection = await engine.on_trend(trend, current_bid=0.29, current_ask=0.31)
     assert pos is None
+    assert rejection is not None
     assert engine.get_status()["open_positions"] == config.MAX_POSITIONS_PER_MARKET
 
 
@@ -192,8 +197,9 @@ async def test_daily_loss_limit_pauses(engine):
     engine._daily_pnl = -(config.DAILY_LOSS_LIMIT + 1)
 
     trend = _make_trend()
-    pos = await engine.on_trend(trend, current_bid=0.29, current_ask=0.31)
+    pos, rejection = await engine.on_trend(trend, current_bid=0.29, current_ask=0.31)
     assert pos is None
+    assert rejection is not None
     assert engine.get_status()["paused"] is True
 
 
@@ -207,12 +213,12 @@ async def test_recovery_restores_daily_counters(tmp_path):
 
     # Open a position and close it with known P&L
     trend = _make_trend(current_price=0.25)
-    pos = await eng1.on_trend(trend, current_bid=0.24, current_ask=0.25)
+    pos, _ = await eng1.on_trend(trend, current_bid=0.24, current_ask=0.25)
     assert pos is not None
 
     # Peak at 0.45, 10% of 0.45 = 0.045 → stop at 0.405; midpoint 0.40 triggers
-    await eng1.on_price_update(pos.token_id, 0.44, 0.46, time.time() + 10)
-    closed = await eng1.on_price_update(pos.token_id, 0.39, 0.41, time.time() + 20)
+    await eng1.on_price_update(pos.token_id, 0.44, 0.46, time.time() + 35)
+    closed = await eng1.on_price_update(pos.token_id, 0.39, 0.41, time.time() + 40)
     assert len(closed) == 1
 
     saved_pnl = eng1._daily_pnl
@@ -236,7 +242,7 @@ async def test_disconnect_closes_all(engine):
         trend = _make_trend(
             token_id=f"tok_{i}", market_id=f"cond_{i}", market_name=f"Market {i}"
         )
-        pos = await engine.on_trend(trend, current_bid=0.29, current_ask=0.31)
+        pos, _ = await engine.on_trend(trend, current_bid=0.29, current_ask=0.31)
         assert pos is not None
         engine._last_prices[f"tok_{i}"] = (0.35, 0.37)
 
@@ -251,28 +257,49 @@ async def test_disconnect_closes_all(engine):
 @pytest.mark.asyncio
 async def test_trailing_stop_percentage(engine):
     trend = _make_trend(current_price=0.30)
-    pos = await engine.on_trend(trend, current_bid=0.29, current_ask=0.31)
+    pos, _ = await engine.on_trend(trend, current_bid=0.29, current_ask=0.31)
     assert pos is not None
 
     # peak at midpoint 0.50; 10% of 0.50 = 0.05 → stop at 0.45
-    closed = await engine.on_price_update("tok_yes", 0.49, 0.51, time.time() + 10)
+    closed = await engine.on_price_update("tok_yes", 0.49, 0.51, time.time() + 35)
     assert closed == []
 
     # midpoint 0.46 → (0.50-0.46)/0.50 = 8% < 10% → no trigger
-    closed = await engine.on_price_update("tok_yes", 0.45, 0.47, time.time() + 20)
+    closed = await engine.on_price_update("tok_yes", 0.45, 0.47, time.time() + 40)
     assert closed == []
 
     # midpoint 0.44 → (0.50-0.44)/0.50 = 12% >= 10% → trigger
-    closed = await engine.on_price_update("tok_yes", 0.43, 0.45, time.time() + 30)
+    closed = await engine.on_price_update("tok_yes", 0.43, 0.45, time.time() + 45)
     assert len(closed) == 1
     assert closed[0].exit_reason == ExitReason.TRAILING_STOP
     assert closed[0].exit_price == 0.43
 
 
 @pytest.mark.asyncio
+async def test_trailing_stop_grace_period(engine):
+    now = time.time()
+    trend = _make_trend(current_price=0.30, timestamp=now)
+    pos, _ = await engine.on_trend(trend, current_bid=0.29, current_ask=0.31)
+    assert pos is not None
+
+    # Price drops 15% immediately — within grace period, should NOT trigger
+    closed = await engine.on_price_update("tok_yes", 0.20, 0.22, now + 5)
+    assert closed == []
+
+    # Still within grace period at 25s
+    closed = await engine.on_price_update("tok_yes", 0.20, 0.22, now + 25)
+    assert closed == []
+
+    # Past grace period (31s) — NOW it should trigger
+    closed = await engine.on_price_update("tok_yes", 0.20, 0.22, now + 31)
+    assert len(closed) == 1
+    assert closed[0].exit_reason == ExitReason.TRAILING_STOP
+
+
+@pytest.mark.asyncio
 async def test_entry_rejected_max_entry_price(engine):
     trend = _make_trend(current_price=0.85)
-    pos = await engine.on_trend(trend, current_bid=0.84, current_ask=0.86)
+    pos, _ = await engine.on_trend(trend, current_bid=0.84, current_ask=0.86)
     assert pos is None
 
 
@@ -280,7 +307,7 @@ async def test_entry_rejected_max_entry_price(engine):
 async def test_stale_position_closed(engine):
     trend = _make_trend(current_price=0.30)
     now = time.time()
-    pos = await engine.on_trend(trend, current_bid=0.29, current_ask=0.31)
+    pos, _ = await engine.on_trend(trend, current_bid=0.29, current_ask=0.31)
     assert pos is not None
 
     await engine.on_price_update("tok_yes", 0.34, 0.36, now + 10)

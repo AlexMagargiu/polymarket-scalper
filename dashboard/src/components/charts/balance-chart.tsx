@@ -22,9 +22,14 @@ function toUTC(iso: string): UTCTimestamp {
 }
 
 function toChartData(raw: { time: string; value: number }[]) {
-  return raw
+  const sorted = raw
     .map((d) => ({ time: toUTC(d.time), value: d.value }))
     .sort((a, b) => (a.time as number) - (b.time as number));
+  const deduped = new Map<number, { time: UTCTimestamp; value: number }>();
+  for (const point of sorted) {
+    deduped.set(point.time as number, point);
+  }
+  return Array.from(deduped.values());
 }
 
 export function BalanceChart({

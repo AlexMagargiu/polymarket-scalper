@@ -1,0 +1,67 @@
+[
+  {
+    "id": "miss-001",
+    "file": "scalper/main.py",
+    "line": 113,
+    "category": "data_loss",
+    "description": "db.log_trend() called AFTER engine.on_trend() — if engine raises, trend never persisted",
+    "found_date": "2026-05-22",
+    "found_session": "S1",
+    "status": "fixed",
+    "resolution_date": "2026-05-22",
+    "resolution_notes": "Refactored: trend_data built first, engine.on_trend() wrapped in try/except, db.log_trend() always called after",
+    "verify_grep": "engine_error"
+  },
+  {
+    "id": "miss-002",
+    "file": "scalper/tracker.py",
+    "line": 80,
+    "category": "data_loss",
+    "description": "tracker._flush() clears self._pending even if db.log_price_snapshots_batch() fails — snapshots lost silently",
+    "found_date": "2026-05-22",
+    "found_session": "S1",
+    "status": "fixed",
+    "resolution_date": "2026-05-22",
+    "resolution_notes": "Copies pending to local list, only clears on success, logs warning on failure",
+    "verify_grep": "will retry"
+  },
+  {
+    "id": "miss-003",
+    "file": "scalper/tracker.py",
+    "line": 48,
+    "category": "zombie_data",
+    "description": "Tracked tokens from removed markets never resolve — no price updates = no resolution detection",
+    "found_date": "2026-05-22",
+    "found_session": "S1",
+    "status": "fixed",
+    "resolution_date": "2026-05-22",
+    "resolution_notes": "Added cleanup_removed_tokens() method, called after market_refresher removes tokens",
+    "verify_grep": "cleanup_removed_tokens"
+  },
+  {
+    "id": "miss-004",
+    "file": "scalper/main.py",
+    "line": 95,
+    "category": "broken_linkage",
+    "description": "surge_id is None when trend fires without simultaneous surge — trade has no surge FK link",
+    "found_date": "2026-05-22",
+    "found_session": "S1",
+    "status": "wont_fix",
+    "resolution_date": "2026-05-22",
+    "resolution_notes": "By design. Trend can fire on accumulated history without a new surge in the current tick. surge_id=NULL is correct — the trend itself is logged in the trends table.",
+    "verify_grep": "surge_id=surge_id"
+  },
+  {
+    "id": "miss-005",
+    "file": "scalper/tracker.py",
+    "line": 42,
+    "category": "missing_data",
+    "description": "Price history before first surge is not captured — tracking only starts when surge/trend fires",
+    "found_date": "2026-05-22",
+    "found_session": "S1",
+    "status": "wont_fix",
+    "resolution_date": "2026-05-22",
+    "resolution_notes": "Tracking all 750 tokens would generate 130M rows/day. Only tracking tokens with activity is the right tradeoff.",
+    "verify_grep": "if token_id not in self._tracked"
+  }
+]

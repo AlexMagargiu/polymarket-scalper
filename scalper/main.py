@@ -27,7 +27,6 @@ from scalper.tracker import PriceTracker
 from scalper.websocket import (
     BestBidAskEvent,
     BookSnapshotEvent,
-    LastTradePriceEvent,
     WebSocketManager,
 )
 
@@ -106,11 +105,7 @@ async def main():
                     await notifier.send_exit(trade)
 
                 if trend:
-                    position, rejection = await engine.on_trend(
-                        trend, event.best_bid, event.best_ask, surge_id=surge_id
-                    )
-                    entered = position is not None
-                    await db.log_trend({
+                    trend_data = {
                         "timestamp": db._ts_to_iso(trend.timestamp),
                         "token_id": trend.token_id,
                         "market_id": trend.market_id,
@@ -119,25 +114,34 @@ async def main():
                         "first_surge_price": trend.first_surge_price,
                         "current_price": trend.current_price,
                         "window_seconds": trend.window_seconds,
-                        "entered": 1 if entered else 0,
-                        "rejection_reason": rejection,
+                        "entered": 0,
+                        "rejection_reason": "engine_error",
                         "entry_bid": event.best_bid,
                         "entry_ask": event.best_ask,
-                    })
+                    }
+                    try:
+                        position, rejection = await engine.on_trend(
+                            trend, event.best_bid, event.best_ask, surge_id=surge_id
+                        )
+                        entered = position is not None
+                        trend_data["entered"] = 1 if entered else 0
+                        trend_data["rejection_reason"] = rejection
+                        if position:
+                            trend_data["trade_id"] = position.id
+                    except Exception:
+                        logger.exception("engine.on_trend failed")
+                        position = None
+                    await db.log_trend(trend_data)
                     await tracker.track(
                         event.asset_id, trend.market_id, trend.market_name,
-                        "traded" if entered else "trend_rejected", event.timestamp,
+                        "traded" if trend_data["entered"] else "trend_rejected",
+                        event.timestamp,
                     )
                     if position:
                         await notifier.send_entry(position)
 
             elif isinstance(event, BookSnapshotEvent):
                 pass
-
-            elif isinstance(event, LastTradePriceEvent):
-                detector.on_trade(
-                    event.asset_id, event.price, event.side, event.size, event.timestamp
-                )
 
             elif event == "DISCONNECT":
                 logger.warning("Prolonged disconnect — closing all positions")
@@ -169,6 +173,8 @@ async def main():
                     logger.info(
                         "Market refresh: +%d -%d tokens", len(added), len(removed)
                     )
+                active_tokens = set(get_all_token_ids(markets))
+                await tracker.cleanup_removed_tokens(active_tokens)
             except Exception:
                 logger.exception("Market refresh failed")
 
@@ -209,7 +215,7 @@ async def main():
         while True:
             await asyncio.sleep(86400)  # once per day
             try:
-                await db.purge_old_data(retention_days=60)
+                await db.purge_old_data(retention_days=config.DATA_RETENTION_DAYS)
                 logger.info("Purged data older than 60 days")
             except Exception:
                 logger.exception("Purge failed")

@@ -1,0 +1,67 @@
+[
+  {
+    "id": "logic-001",
+    "file": "scalper/paper_engine.py",
+    "line": 305,
+    "category": "restart_bug",
+    "description": "Stale position timeout uses entry_time fallback on restart — positions opened days ago get force-closed immediately before any price updates arrive",
+    "found_date": "2026-05-22",
+    "found_session": "S1",
+    "status": "fixed",
+    "resolution_date": "2026-05-22",
+    "resolution_notes": "init() now sets _last_update_time[token_id] = time.time() for each restored position",
+    "verify_grep": "_last_update_time\\[row"
+  },
+  {
+    "id": "logic-002",
+    "file": "scalper/paper_engine.py",
+    "line": 134,
+    "category": "logic_error",
+    "description": "trailing_peak initialized to midpoint (below entry_price=ask) — position starts with peak below entry, reducing trailing stop protection by spread amount",
+    "found_date": "2026-05-22",
+    "found_session": "S1",
+    "status": "wont_fix",
+    "resolution_date": "2026-05-22",
+    "resolution_notes": "Intentional design. Previous version used ask which caused instant stops from spread hole. Using midpoint means trailing stop doesn't trigger until price rises above entry then drops — this is the desired behavior. Combined with 30s grace period, prevents false stops.",
+    "verify_grep": "trailing_peak="
+  },
+  {
+    "id": "logic-003",
+    "file": "scalper/db.py",
+    "line": 429,
+    "category": "data_growth",
+    "description": "balance_log never purged — grows forever with 2 entries per trade",
+    "found_date": "2026-05-22",
+    "found_session": "S1",
+    "status": "fixed",
+    "resolution_date": "2026-05-22",
+    "resolution_notes": "Added balance_log purge to purge_old_data(), keeps initial entry",
+    "verify_grep": "DELETE FROM balance_log"
+  },
+  {
+    "id": "logic-004",
+    "file": "scalper/paper_engine.py",
+    "line": 219,
+    "category": "exit_priority",
+    "description": "Take profit overwrites trailing stop exit_reason when both trigger simultaneously — mislabeled exit reason in rare edge case",
+    "found_date": "2026-05-22",
+    "found_session": "S1",
+    "status": "wont_fix",
+    "resolution_date": "2026-05-22",
+    "resolution_notes": "Intentional. Take profit at 0.90 is the desired exit when price is high. Mislabeling only affects analytics, not execution. Exit price is the same either way.",
+    "verify_grep": "TAKE_PROFIT"
+  },
+  {
+    "id": "logic-005",
+    "file": "scalper/tracker.py",
+    "line": 48,
+    "category": "false_positive_resolution",
+    "description": "Resolution detection (bid<0.02 or ask>0.98) can trigger on illiquid markets with wide spreads that aren't actually resolving",
+    "found_date": "2026-05-22",
+    "found_session": "S1",
+    "status": "fixed",
+    "resolution_date": "2026-05-22",
+    "resolution_notes": "Added spread < 0.10 requirement alongside bid/ask threshold — illiquid wide-spread markets no longer falsely resolve",
+    "verify_grep": "RESOLVING_BID"
+  }
+]

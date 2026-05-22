@@ -1,0 +1,54 @@
+[
+  {
+    "id": "cons-001",
+    "file": "scalper/paper_engine.py",
+    "line": 216,
+    "category": "asymmetric_check",
+    "description": "Entry has spread check (>0.15 rejects), but exit had no spread check — exits at terrible prices in wide-spread markets",
+    "found_date": "2026-05-22",
+    "found_session": "S1",
+    "status": "fixed",
+    "resolution_date": "2026-05-22",
+    "resolution_notes": "Added exit spread check — trailing stop exit delayed if spread > MAX_ENTRY_SPREAD. Take profit exits always execute (price is favorable).",
+    "verify_grep": "exit_spread"
+  },
+  {
+    "id": "cons-002",
+    "file": "scalper/paper_engine.py",
+    "line": 77,
+    "category": "duplicated_threshold",
+    "description": "Resolving market thresholds (0.02/0.98) hardcoded in paper_engine and tracker.py independently — could diverge",
+    "found_date": "2026-05-22",
+    "found_session": "S1",
+    "status": "fixed",
+    "resolution_date": "2026-05-22",
+    "resolution_notes": "Both now use config.RESOLVING_BID/config.RESOLVING_ASK",
+    "verify_grep": "config.RESOLVING"
+  },
+  {
+    "id": "cons-003",
+    "file": "scalper/paper_engine.py",
+    "line": 75,
+    "category": "intentional_asymmetry",
+    "description": "Entry at ASK, detection at MIDPOINT, exit at BID — three different price conventions in the pipeline",
+    "found_date": "2026-05-22",
+    "found_session": "S1",
+    "status": "wont_fix",
+    "resolution_date": "2026-05-22",
+    "resolution_notes": "Intentional. Entry at ask simulates aggressive taker fill. Detection uses midpoint for stability. Exit at bid simulates worst-case exit. This models real execution accurately.",
+    "verify_grep": "entry_price = current_ask"
+  },
+  {
+    "id": "cons-004",
+    "file": "scalper/backtest.py",
+    "line": 206,
+    "category": "dead_code_path",
+    "description": "backtest simulate_params has full 'else' branch for direction=='down' (lines 206-214) — dead code since no trades ever have direction=down",
+    "found_date": "2026-05-22",
+    "found_session": "S1",
+    "status": "wont_fix",
+    "resolution_date": "2026-05-22",
+    "resolution_notes": "Kept for potential future bidirectional trading support. Low maintenance cost.",
+    "verify_grep": "direction == \"down\""
+  }
+]

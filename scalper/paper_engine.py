@@ -56,6 +56,7 @@ class PaperEngine:
                 surge_id=row.get("surge_id"),
             )
             self._positions[row["id"]] = pos
+            self._last_update_time[row["token_id"]] = time.time()
 
         logger.info(
             "Engine initialized: balance=$%.2f, %d open positions",
@@ -74,7 +75,7 @@ class PaperEngine:
 
         entry_price = current_ask
 
-        if current_bid < 0.02 or current_ask > 0.98:
+        if current_bid < config.RESOLVING_BID or current_ask > config.RESOLVING_ASK:
             reason = f"resolving market (bid={current_bid:.2f} ask={current_ask:.2f})"
             logger.info("REJECTED %s: %s", trend.market_name[:40], reason)
             return None, reason
@@ -85,7 +86,7 @@ class PaperEngine:
             return None, reason
 
         spread = current_ask - current_bid
-        if spread > 0.15:
+        if spread > config.MAX_ENTRY_SPREAD:
             reason = f"wide spread {spread:.2f}"
             logger.info("REJECTED %s: %s", trend.market_name[:40], reason)
             return None, reason
@@ -220,6 +221,10 @@ class PaperEngine:
                 exit_price = best_bid
 
             if exit_reason:
+                exit_spread = best_ask - best_bid
+                if exit_reason == ExitReason.TRAILING_STOP and exit_spread > config.MAX_ENTRY_SPREAD:
+                    logger.debug("Delaying exit for %s: wide spread %.2f", pos.market_name[:30], exit_spread)
+                    continue
                 trade = await self._close_position(
                     trade_id, pos, exit_price, exit_reason, timestamp
                 )
@@ -266,6 +271,11 @@ class PaperEngine:
             )
 
         del self._positions[trade_id]
+
+        still_used = any(p.token_id == pos.token_id for p in self._positions.values())
+        if not still_used:
+            self._last_prices.pop(pos.token_id, None)
+            self._last_update_time.pop(pos.token_id, None)
 
         logger.info(
             "EXIT %s (%s): %s @ %.2f → %.2f | P&L: $%.2f [balance=$%.2f]",

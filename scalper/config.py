@@ -14,6 +14,11 @@ TRAILING_STOP_PCT = 0.10        # 10% reversal from peak triggers exit
 MAX_ENTRY_PRICE = 0.80          # refuse entries above 80c (no upside to 90c TP)
 STALE_POSITION_TIMEOUT = 7200   # 2 hours — close positions with no price updates
 TRAILING_STOP_GRACE = 30        # seconds — don't check trailing stop for first 30s after entry
+SURGE_COOLDOWN = 30             # seconds between surges on same token
+RESOLVING_BID = 0.02            # bid below this = resolving/resolved
+RESOLVING_ASK = 0.98            # ask above this = resolving/resolved
+MAX_ENTRY_SPREAD = 0.15         # reject entries with spread wider than this
+DATA_RETENTION_DAYS = 60        # purge price_history, surges, trends older than this
 
 # === Position / Risk Limits ===
 POSITION_SIZE = 25.0            # $25 per trade
@@ -32,7 +37,6 @@ MIN_VOLUME_24H = 10_000         # $10K minimum 24h volume
 # === URLs ===
 WS_URL = "wss://ws-subscriptions-clob.polymarket.com/ws/market"
 GAMMA_API_URL = "https://gamma-api.polymarket.com/markets"
-CLOB_API_URL = "https://clob.polymarket.com"
 
 # === API / Services (from env) ===
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
@@ -52,8 +56,6 @@ RECONNECT_MULTIPLIER = 2.0
 DB_PATH = os.getenv("DB_PATH", "scalper.db")
 MARKET_REFRESH_INTERVAL = 300   # 5 minutes
 PRICE_WINDOW_MAX_AGE = 120      # seconds — prune rolling window entries older than this
-STALE_THRESHOLD = 60            # seconds — mark token stale if no update
-
 # === Logging ===
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
 LOG_FORMAT = "%(asctime)s [%(levelname)s] %(name)s: %(message)s"

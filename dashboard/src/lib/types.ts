@@ -56,6 +56,12 @@ export interface Trade {
   pnl: number | null;
   peak_price: number | null;
   max_favorable_excursion: number | null;
+  max_adverse_excursion: number | null;
+  entry_bid: number | null;
+  entry_spread: number | null;
+  config_trailing_pct: number | null;
+  config_max_entry: number | null;
+  config_trend_min_surges: number | null;
 }
 
 export interface BalanceEntry {
@@ -86,6 +92,8 @@ export interface WsStatus {
   last_message_at: string | null;
   total_messages: number;
   events_by_type: Record<string, number>;
+  connections: number;
+  tokens_per_connection: number[];
 }
 
 export interface DetectorStats {

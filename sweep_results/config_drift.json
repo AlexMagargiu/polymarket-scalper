@@ -1,0 +1,80 @@
+[
+  {
+    "id": "config-001",
+    "file": "scalper/config.py",
+    "line": 55,
+    "category": "dead_config",
+    "description": "STALE_THRESHOLD=60 defined but never used anywhere — detector uses hardcoded 600s, engine uses STALE_POSITION_TIMEOUT=7200",
+    "found_date": "2026-05-22",
+    "found_session": "S1",
+    "status": "fixed",
+    "resolution_date": "2026-05-22",
+    "resolution_notes": "Removed STALE_THRESHOLD from config.py",
+    "verify_grep": "STALE_THRESHOLD"
+  },
+  {
+    "id": "config-002",
+    "file": "scalper/detector.py",
+    "line": 75,
+    "category": "hardcoded_value",
+    "description": "Surge cooldown hardcoded to 30 — should be config.SURGE_COOLDOWN",
+    "found_date": "2026-05-22",
+    "found_session": "S1",
+    "status": "fixed",
+    "resolution_date": "2026-05-22",
+    "resolution_notes": "Added config.SURGE_COOLDOWN=30, detector now uses it",
+    "verify_grep": "SURGE_COOLDOWN"
+  },
+  {
+    "id": "config-003",
+    "file": "scalper/paper_engine.py",
+    "line": 77,
+    "category": "hardcoded_value",
+    "description": "Resolving market thresholds 0.02/0.98 hardcoded — duplicated in tracker.py",
+    "found_date": "2026-05-22",
+    "found_session": "S1",
+    "status": "fixed",
+    "resolution_date": "2026-05-22",
+    "resolution_notes": "Added config.RESOLVING_BID/ASK, both paper_engine and tracker now use config values",
+    "verify_grep": "RESOLVING_BID"
+  },
+  {
+    "id": "config-004",
+    "file": "scalper/paper_engine.py",
+    "line": 88,
+    "category": "hardcoded_value",
+    "description": "Spread threshold 0.15 hardcoded — should be config.MAX_ENTRY_SPREAD",
+    "found_date": "2026-05-22",
+    "found_session": "S1",
+    "status": "fixed",
+    "resolution_date": "2026-05-22",
+    "resolution_notes": "Added config.MAX_ENTRY_SPREAD=0.15, paper_engine now uses it for both entry and exit spread checks",
+    "verify_grep": "MAX_ENTRY_SPREAD"
+  },
+  {
+    "id": "config-005",
+    "file": "scalper/main.py",
+    "line": 215,
+    "category": "hardcoded_value",
+    "description": "purge retention_days=60 hardcoded in main.py",
+    "found_date": "2026-05-22",
+    "found_session": "S1",
+    "status": "fixed",
+    "resolution_date": "2026-05-22",
+    "resolution_notes": "Added config.DATA_RETENTION_DAYS=60, main.py now uses it",
+    "verify_grep": "DATA_RETENTION_DAYS"
+  },
+  {
+    "id": "config-006",
+    "file": "scalper/db.py",
+    "line": 189,
+    "category": "incomplete_snapshot",
+    "description": "Trade config snapshot missing SURGE_THRESHOLD, TAKER_FEE_RATE, POSITION_SIZE — needed for backtest accuracy",
+    "found_date": "2026-05-22",
+    "found_session": "S1",
+    "status": "fixed",
+    "resolution_date": "2026-05-22",
+    "resolution_notes": "Added 3 migration columns (config_surge_threshold, config_taker_fee_rate, config_position_size) and store them in log_trade_entry()",
+    "verify_grep": "config_trailing_pct"
+  }
+]

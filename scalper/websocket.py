@@ -184,7 +184,7 @@ class _WebSocketConnection:
         try:
             await self._ws.send(json.dumps(msg))
         except Exception:
-            pass
+            logger.warning("[conn-%d] Failed to send remove_tokens", self.conn_id)
 
     async def listen(self, callback: Callable):
         while True:

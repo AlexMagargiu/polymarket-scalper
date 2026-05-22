@@ -2,14 +2,12 @@ import logging
 import time
 from typing import Optional
 
-from scalper import db
+from scalper import config, db
 
 logger = logging.getLogger(__name__)
 
-SNAPSHOT_INTERVAL = 5      # seconds between price snapshots
-FLUSH_INTERVAL = 30        # seconds between DB batch writes
-RESOLUTION_BID = 0.02      # bid below this = resolved NO
-RESOLUTION_ASK = 0.98      # ask above this = resolved YES
+SNAPSHOT_INTERVAL = 5
+FLUSH_INTERVAL = 30
 
 
 class PriceTracker:
@@ -44,8 +42,9 @@ class PriceTracker:
 
         midpoint = (bid + ask) / 2
 
-        # Check if market resolved
-        if bid < RESOLUTION_BID or ask > RESOLUTION_ASK:
+        # Check if market resolved (require narrow spread to avoid false positives on illiquid markets)
+        spread = ask - bid
+        if (bid < config.RESOLVING_BID or ask > config.RESOLVING_ASK) and spread < 0.10:
             await self._flush()
             self._last_flush = timestamp
             resolution_price = midpoint
@@ -78,12 +77,25 @@ class PriceTracker:
     async def _flush(self):
         if not self._pending:
             return
-        await db.log_price_snapshots_batch(self._pending)
-        self._pending.clear()
+        batch = list(self._pending)
+        try:
+            await db.log_price_snapshots_batch(batch)
+            self._pending.clear()
+        except Exception:
+            logger.warning("Failed to flush %d price snapshots, will retry", len(batch))
 
     async def flush(self):
         """Public flush for shutdown."""
         await self._flush()
+
+    async def cleanup_removed_tokens(self, active_token_ids: set[str]):
+        removed = self._tracked - active_token_ids
+        for token_id in removed:
+            await db.resolve_tracked_token(token_id, -1.0, db._ts_to_iso(time.time()))
+            self._tracked.discard(token_id)
+            self._last_snapshot.pop(token_id, None)
+        if removed:
+            logger.info("Cleaned up %d tracked tokens removed from market feed", len(removed))
 
     def get_stats(self) -> dict:
         return {

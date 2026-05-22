@@ -86,7 +86,8 @@ CREATE TABLE IF NOT EXISTS trends (
     entered INTEGER DEFAULT 0,
     rejection_reason TEXT,
     entry_bid REAL,
-    entry_ask REAL
+    entry_ask REAL,
+    trade_id INTEGER
 );
 """
 
@@ -98,6 +99,9 @@ _MIGRATIONS = [
     "ALTER TABLE trades ADD COLUMN config_max_entry REAL",
     "ALTER TABLE trades ADD COLUMN config_trend_min_surges INTEGER",
     "ALTER TABLE trades ADD COLUMN max_adverse_excursion REAL",
+    "ALTER TABLE trades ADD COLUMN config_surge_threshold REAL",
+    "ALTER TABLE trades ADD COLUMN config_taker_fee_rate REAL",
+    "ALTER TABLE trades ADD COLUMN config_position_size REAL",
 ]
 
 
@@ -129,14 +133,28 @@ async def init_db(path: str = None) -> aiosqlite.Connection:
     _db = await aiosqlite.connect(path)
     _db.row_factory = aiosqlite.Row
     await _db.execute("PRAGMA journal_mode=WAL")
+    await _db.execute("PRAGMA busy_timeout=5000")
+    await _db.execute("PRAGMA synchronous=NORMAL")
     await _db.executescript(_SCHEMA)
+    await _db.commit()
+
+    _INDEX_MIGRATIONS = [
+        "CREATE INDEX IF NOT EXISTS idx_surges_timestamp ON surges(timestamp)",
+        "CREATE INDEX IF NOT EXISTS idx_surges_token_id ON surges(token_id)",
+        "CREATE INDEX IF NOT EXISTS idx_trends_timestamp ON trends(timestamp)",
+        "CREATE INDEX IF NOT EXISTS idx_trades_exit_time ON trades(exit_time)",
+        "CREATE INDEX IF NOT EXISTS idx_tracked_tokens_token_id ON tracked_tokens(token_id)",
+        "CREATE INDEX IF NOT EXISTS idx_tracked_tokens_resolved ON tracked_tokens(resolved_at)",
+    ]
+    for idx in _INDEX_MIGRATIONS:
+        await _db.execute(idx)
     await _db.commit()
 
     for migration in _MIGRATIONS:
         try:
             await _db.execute(migration)
         except Exception:
-            pass  # column already exists
+            pass
     await _db.commit()
 
     cursor = await _db.execute("SELECT COUNT(*) FROM balance_log")
@@ -186,13 +204,11 @@ async def mark_surge_traded(surge_id: int):
 
 async def log_trade_entry(trade: Trade, entry_bid: float = None, entry_spread: float = None) -> int:
     db = await get_db()
-    config_trailing_pct = config.TRAILING_STOP_PCT
-    config_max_entry = config.MAX_ENTRY_PRICE
-    config_trend_min_surges = config.TREND_MIN_SURGES
     cursor = await db.execute(
         """INSERT INTO trades (surge_id, market_id, token_id, market_name, direction, entry_price, entry_fee, entry_time, shares, position_size,
-           entry_bid, entry_spread, config_trailing_pct, config_max_entry, config_trend_min_surges)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+           entry_bid, entry_spread, config_trailing_pct, config_max_entry, config_trend_min_surges,
+           config_surge_threshold, config_taker_fee_rate, config_position_size)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         (
             trade.surge_id,
             trade.market_id,
@@ -206,9 +222,12 @@ async def log_trade_entry(trade: Trade, entry_bid: float = None, entry_spread: f
             trade.position_size,
             entry_bid,
             entry_spread,
-            config_trailing_pct,
-            config_max_entry,
-            config_trend_min_surges,
+            config.TRAILING_STOP_PCT,
+            config.MAX_ENTRY_PRICE,
+            config.TREND_MIN_SURGES,
+            config.SURGE_THRESHOLD,
+            config.TAKER_FEE_RATE,
+            config.POSITION_SIZE,
         ),
     )
     await db.commit()
@@ -361,8 +380,8 @@ async def log_trend(trend_data: dict) -> int:
     cursor = await db.execute(
         """INSERT INTO trends (timestamp, token_id, market_id, market_name, surge_count,
            first_surge_price, current_price, window_seconds, entered, rejection_reason,
-           entry_bid, entry_ask)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+           entry_bid, entry_ask, trade_id)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         (
             trend_data["timestamp"],
             trend_data["token_id"],
@@ -376,6 +395,7 @@ async def log_trend(trend_data: dict) -> int:
             trend_data.get("rejection_reason"),
             trend_data.get("entry_bid"),
             trend_data.get("entry_ask"),
+            trend_data.get("trade_id"),
         ),
     )
     await db.commit()
@@ -436,6 +456,7 @@ async def purge_old_data(retention_days: int = 60):
     await db.execute("UPDATE trades SET surge_id = NULL WHERE surge_id IN (SELECT id FROM surges WHERE timestamp < ?)", (cutoff_iso,))
     await db.execute("DELETE FROM surges WHERE timestamp < ?", (cutoff_iso,))
     await db.execute("DELETE FROM trends WHERE timestamp < ?", (cutoff_iso,))
+    await db.execute("DELETE FROM balance_log WHERE timestamp < ? AND id != (SELECT MIN(id) FROM balance_log)", (cutoff_iso,))
     await db.commit()
 
 

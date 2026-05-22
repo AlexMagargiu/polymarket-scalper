@@ -72,7 +72,7 @@ class TrendDetector:
             return None
 
         last_surge = self._surge_cooldowns.get(token_id, 0)
-        if timestamp - last_surge < 30:
+        if timestamp - last_surge < config.SURGE_COOLDOWN:
             return None
         self._surge_cooldowns[token_id] = timestamp
 
@@ -157,11 +157,6 @@ class TrendDetector:
         )
 
         return trend
-
-    def on_trade(
-        self, token_id: str, price: float, side: str, size: float, timestamp: float
-    ):
-        pass
 
     def prune_stale_tokens(self, now: float | None = None):
         if now is None:

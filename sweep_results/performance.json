@@ -1,0 +1,41 @@
+[
+  {
+    "id": "perf-001",
+    "file": "scalper/paper_engine.py",
+    "line": 28,
+    "category": "unbounded_dict",
+    "description": "_last_prices and _last_update_time dicts grow forever — entries never removed when positions close",
+    "found_date": "2026-05-22",
+    "found_session": "S1",
+    "status": "fixed",
+    "resolution_date": "2026-05-22",
+    "resolution_notes": "Added cleanup in _close_position() — removes entries when no more positions use that token_id",
+    "verify_grep": "still_used"
+  },
+  {
+    "id": "perf-002",
+    "file": "scalper/db.py",
+    "line": 131,
+    "category": "missing_pragma",
+    "description": "No PRAGMA busy_timeout — under load, SQLite returns SQLITE_BUSY causing unhandled crashes",
+    "found_date": "2026-05-22",
+    "found_session": "S1",
+    "status": "fixed",
+    "resolution_date": "2026-05-22",
+    "resolution_notes": "Added PRAGMA busy_timeout=5000 and PRAGMA synchronous=NORMAL in init_db()",
+    "verify_grep": "busy_timeout"
+  },
+  {
+    "id": "perf-003",
+    "file": "scalper/db.py",
+    "line": 74,
+    "category": "missing_indexes",
+    "description": "No indexes on surges.timestamp, trends.timestamp, tracked_tokens.token_id, trades.exit_time — purge and queries do full table scans",
+    "found_date": "2026-05-22",
+    "found_session": "S1",
+    "status": "fixed",
+    "resolution_date": "2026-05-22",
+    "resolution_notes": "Added 6 indexes in init_db() via CREATE INDEX IF NOT EXISTS",
+    "verify_grep": "idx_surges_timestamp"
+  }
+]

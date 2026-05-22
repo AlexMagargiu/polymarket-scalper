@@ -1,0 +1,54 @@
+[
+  {
+    "id": "db-001",
+    "file": "scalper/db.py",
+    "line": 131,
+    "category": "missing_pragma",
+    "description": "PRAGMA foreign_keys never enabled — FK declarations are decorative only",
+    "found_date": "2026-05-22",
+    "found_session": "S1",
+    "status": "wont_fix",
+    "resolution_date": "2026-05-22",
+    "resolution_notes": "Intentionally not enabled. Enabling FKs would break purge_old_data() which nullifies surge_id before deleting surges. The current purge logic handles referential integrity manually. Enabling FKs would require cascade deletes which we don't want (trades should survive surge deletion).",
+    "verify_grep": "foreign_keys"
+  },
+  {
+    "id": "db-002",
+    "file": "scalper/db.py",
+    "line": 135,
+    "category": "error_swallowing",
+    "description": "Migration try/except catches all Exception types — swallows disk-full, I/O errors alongside expected 'column already exists'",
+    "found_date": "2026-05-22",
+    "found_session": "S1",
+    "status": "open",
+    "resolution_date": null,
+    "resolution_notes": null,
+    "verify_grep": "except Exception"
+  },
+  {
+    "id": "db-003",
+    "file": "scalper/db.py",
+    "line": 74,
+    "category": "missing_indexes",
+    "description": "Missing indexes on surges, trends, trades, tracked_tokens — purge and queries do full table scans",
+    "found_date": "2026-05-22",
+    "found_session": "S1",
+    "status": "fixed",
+    "resolution_date": "2026-05-22",
+    "resolution_notes": "Added 6 indexes in init_db()",
+    "verify_grep": "idx_surges_timestamp"
+  },
+  {
+    "id": "db-004",
+    "file": "scalper/db.py",
+    "line": 76,
+    "category": "missing_linkage",
+    "description": "trends table has no trade_id column — cannot directly link which trend caused which trade entry",
+    "found_date": "2026-05-22",
+    "found_session": "S1",
+    "status": "fixed",
+    "resolution_date": "2026-05-22",
+    "resolution_notes": "Added trade_id column to trends table schema and log_trend(). main.py passes position.id as trade_id when trend produces an entry.",
+    "verify_grep": "log_trend"
+  }
+]

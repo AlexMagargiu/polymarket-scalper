@@ -1,0 +1,54 @@
+[
+  {
+    "id": "log-001",
+    "file": "scalper/paper_engine.py",
+    "line": 173,
+    "category": "silent_state_change",
+    "description": "_validate_entry() sets self._paused=True on daily loss limit without logging the pause event",
+    "found_date": "2026-05-22",
+    "found_session": "S1",
+    "status": "wont_fix",
+    "resolution_date": "2026-05-22",
+    "resolution_notes": "The caller (on_trend) logs the rejection reason which includes 'daily loss limit'. A separate WARNING is logged at line 265 when pnl crosses the limit. Sufficient.",
+    "verify_grep": "self._paused = True"
+  },
+  {
+    "id": "log-002",
+    "file": "scalper/detector.py",
+    "line": 133,
+    "category": "silent_rejection",
+    "description": "_check_trend() returns None silently when market is None (unknown token) — no log",
+    "found_date": "2026-05-22",
+    "found_session": "S1",
+    "status": "wont_fix",
+    "resolution_date": "2026-05-22",
+    "resolution_notes": "This fires on every price update for unmapped tokens. Logging would be extremely noisy. Guard is correct, logging unnecessary.",
+    "verify_grep": "if market is None"
+  },
+  {
+    "id": "log-003",
+    "file": "scalper/websocket.py",
+    "line": 186,
+    "category": "silent_error",
+    "description": "remove_tokens() exception handler is bare 'pass' with no logging",
+    "found_date": "2026-05-22",
+    "found_session": "S1",
+    "status": "fixed",
+    "resolution_date": "2026-05-22",
+    "resolution_notes": "Added logger.warning for failed remove_tokens send",
+    "verify_grep": "except Exception"
+  },
+  {
+    "id": "log-004",
+    "file": "scalper/main.py",
+    "line": 134,
+    "category": "silent_drop",
+    "description": "BookSnapshotEvent handler is 'pass' — no log that events are being intentionally dropped",
+    "found_date": "2026-05-22",
+    "found_session": "S1",
+    "status": "wont_fix",
+    "resolution_date": "2026-05-22",
+    "resolution_notes": "Intentional design decision to avoid stale cached prices. Comment would add clutter. The handler is self-documenting.",
+    "verify_grep": "BookSnapshotEvent"
+  }
+]

@@ -18,6 +18,7 @@ SURGE_COOLDOWN = 30             # seconds between surges on same token
 RESOLVING_BID = 0.02            # bid below this = resolving/resolved
 RESOLVING_ASK = 0.98            # ask above this = resolving/resolved
 MAX_ENTRY_SPREAD = 0.15         # reject entries with spread wider than this
+TREND_MIN_MAGNITUDE = 0.15      # 15c minimum move from first surge to current price
 DATA_RETENTION_DAYS = 60        # purge price_history, surges, trends older than this
 
 # === Position / Risk Limits ===
@@ -25,6 +26,7 @@ POSITION_SIZE = 25.0            # $25 per trade
 STARTING_BALANCE = 5000.0       # $5,000 paper balance
 MAX_CONCURRENT_POSITIONS = 10
 MAX_POSITIONS_PER_MARKET = 3    # scaling in
+MAX_ENTRIES_PER_MARKET_PER_DAY = 1  # one shot per market per day
 MAX_DAILY_TRADES = 100
 DAILY_LOSS_LIMIT = 500.0        # $500 — pause trading if hit
 

@@ -102,6 +102,8 @@ _MIGRATIONS = [
     "ALTER TABLE trades ADD COLUMN config_surge_threshold REAL",
     "ALTER TABLE trades ADD COLUMN config_taker_fee_rate REAL",
     "ALTER TABLE trades ADD COLUMN config_position_size REAL",
+    "ALTER TABLE trends ADD COLUMN trade_id INTEGER",
+    "ALTER TABLE trades ADD COLUMN config_trend_min_magnitude REAL",
 ]
 
 
@@ -207,8 +209,8 @@ async def log_trade_entry(trade: Trade, entry_bid: float = None, entry_spread: f
     cursor = await db.execute(
         """INSERT INTO trades (surge_id, market_id, token_id, market_name, direction, entry_price, entry_fee, entry_time, shares, position_size,
            entry_bid, entry_spread, config_trailing_pct, config_max_entry, config_trend_min_surges,
-           config_surge_threshold, config_taker_fee_rate, config_position_size)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+           config_surge_threshold, config_taker_fee_rate, config_position_size, config_trend_min_magnitude)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         (
             trade.surge_id,
             trade.market_id,
@@ -228,6 +230,7 @@ async def log_trade_entry(trade: Trade, entry_bid: float = None, entry_spread: f
             config.SURGE_THRESHOLD,
             config.TAKER_FEE_RATE,
             config.POSITION_SIZE,
+            config.TREND_MIN_MAGNITUDE,
         ),
     )
     await db.commit()
@@ -400,6 +403,15 @@ async def log_trend(trend_data: dict) -> int:
     )
     await db.commit()
     return cursor.lastrowid
+
+
+async def get_daily_entries_per_market(date_str: str) -> dict[str, int]:
+    db = await get_db()
+    cursor = await db.execute(
+        "SELECT market_id, COUNT(*) FROM trades WHERE DATE(entry_time) = ? GROUP BY market_id",
+        (date_str,),
+    )
+    return {row[0]: row[1] for row in await cursor.fetchall()}
 
 
 async def add_tracked_token(token_id: str, market_id: str, market_name: str, reason: str, start_time: str):

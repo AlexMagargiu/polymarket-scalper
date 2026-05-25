@@ -62,7 +62,7 @@ def _make_trend(
 
 @pytest.mark.asyncio
 async def test_successful_entry(engine):
-    trend = _make_trend(current_price=0.30)
+    trend = _make_trend(first_surge_price=0.10, current_price=0.30)
     pos, rejection = await engine.on_trend(trend, current_bid=0.29, current_ask=0.31)
 
     assert pos is not None
@@ -118,7 +118,7 @@ async def test_entry_rejected_resolving_market(engine):
 
 @pytest.mark.asyncio
 async def test_trailing_stop_exit(engine):
-    trend = _make_trend(current_price=0.25)
+    trend = _make_trend(first_surge_price=0.05, current_price=0.25)
     pos, _ = await engine.on_trend(trend, current_bid=0.24, current_ask=0.26)
     assert pos is not None
     token_id = pos.token_id
@@ -143,7 +143,7 @@ async def test_trailing_stop_exit(engine):
 
 @pytest.mark.asyncio
 async def test_take_profit_exit(engine):
-    trend = _make_trend(current_price=0.25)
+    trend = _make_trend(first_surge_price=0.05, current_price=0.25)
     pos, _ = await engine.on_trend(trend, current_bid=0.24, current_ask=0.26)
     token_id = pos.token_id
 
@@ -154,7 +154,7 @@ async def test_take_profit_exit(engine):
 
 @pytest.mark.asyncio
 async def test_pnl_calculation_with_fees(engine):
-    trend = _make_trend(current_price=0.25)
+    trend = _make_trend(first_surge_price=0.05, current_price=0.25)
     pos, _ = await engine.on_trend(trend, current_bid=0.24, current_ask=0.25)
     assert pos is not None
 
@@ -176,7 +176,8 @@ async def test_pnl_calculation_with_fees(engine):
 
 
 @pytest.mark.asyncio
-async def test_multiple_positions_same_market(engine):
+async def test_multiple_positions_same_market(engine, monkeypatch):
+    monkeypatch.setattr(config, "MAX_ENTRIES_PER_MARKET_PER_DAY", config.MAX_POSITIONS_PER_MARKET + 1)
     for i in range(config.MAX_POSITIONS_PER_MARKET):
         trend = _make_trend(timestamp=time.time() + i * 61)
         pos, _ = await engine.on_trend(trend, current_bid=0.29, current_ask=0.31)
@@ -212,7 +213,7 @@ async def test_recovery_restores_daily_counters(tmp_path):
     await eng1.init()
 
     # Open a position and close it with known P&L
-    trend = _make_trend(current_price=0.25)
+    trend = _make_trend(first_surge_price=0.05, current_price=0.25)
     pos, _ = await eng1.on_trend(trend, current_bid=0.24, current_ask=0.25)
     assert pos is not None
 
@@ -256,7 +257,7 @@ async def test_disconnect_closes_all(engine):
 
 @pytest.mark.asyncio
 async def test_trailing_stop_percentage(engine):
-    trend = _make_trend(current_price=0.30)
+    trend = _make_trend(first_surge_price=0.10, current_price=0.30)
     pos, _ = await engine.on_trend(trend, current_bid=0.29, current_ask=0.31)
     assert pos is not None
 
@@ -278,7 +279,7 @@ async def test_trailing_stop_percentage(engine):
 @pytest.mark.asyncio
 async def test_trailing_stop_grace_period(engine):
     now = time.time()
-    trend = _make_trend(current_price=0.30, timestamp=now)
+    trend = _make_trend(first_surge_price=0.10, current_price=0.30, timestamp=now)
     pos, _ = await engine.on_trend(trend, current_bid=0.29, current_ask=0.31)
     assert pos is not None
 
@@ -304,8 +305,90 @@ async def test_entry_rejected_max_entry_price(engine):
 
 
 @pytest.mark.asyncio
+async def test_entry_rejected_weak_magnitude(engine):
+    trend = _make_trend(first_surge_price=0.40, current_price=0.45)
+    pos, rejection = await engine.on_trend(trend, current_bid=0.44, current_ask=0.46)
+    assert pos is None
+    assert "weak trend magnitude" in rejection
+
+
+@pytest.mark.asyncio
+async def test_entry_accepted_strong_magnitude(engine):
+    trend = _make_trend(first_surge_price=0.40, current_price=0.57)
+    pos, rejection = await engine.on_trend(trend, current_bid=0.56, current_ask=0.58)
+    assert pos is not None
+    assert rejection is None
+
+
+@pytest.mark.asyncio
+async def test_daily_market_limit(engine):
+    trend1 = _make_trend(market_id="cond_limit", token_id="tok_limit")
+    pos, rejection = await engine.on_trend(trend1, current_bid=0.39, current_ask=0.41)
+    assert pos is not None
+
+    trend2 = _make_trend(market_id="cond_limit", token_id="tok_limit", timestamp=time.time() + 60)
+    pos, rejection = await engine.on_trend(trend2, current_bid=0.39, current_ask=0.41)
+    assert pos is None
+    assert "max daily entries for this market" in rejection
+
+
+@pytest.mark.asyncio
+async def test_daily_market_limit_resets_on_new_day(engine):
+    trend1 = _make_trend(market_id="cond_reset", token_id="tok_reset")
+    pos, _ = await engine.on_trend(trend1, current_bid=0.39, current_ask=0.41)
+    assert pos is not None
+
+    # Close the position so MAX_POSITIONS_PER_MARKET doesn't block
+    closed = await engine.on_price_update("tok_reset", 0.90, 0.92, time.time() + 60)
+    assert len(closed) == 1
+
+    # Simulate day change
+    engine._daily_date = "1999-01-01"
+    engine._check_daily_reset()
+
+    trend2 = _make_trend(market_id="cond_reset", token_id="tok_reset", timestamp=time.time() + 120)
+    pos, rejection = await engine.on_trend(trend2, current_bid=0.39, current_ask=0.41)
+    assert pos is not None
+    assert rejection is None
+
+
+@pytest.mark.asyncio
+async def test_entry_rejected_reversed_trend(engine):
+    trend = _make_trend(first_surge_price=0.50, current_price=0.40)
+    pos, rejection = await engine.on_trend(trend, current_bid=0.39, current_ask=0.41)
+    assert pos is None
+    assert "reversed trend" in rejection
+
+
+@pytest.mark.asyncio
+async def test_daily_market_limit_survives_restart(tmp_path):
+    path = str(tmp_path / "test.db")
+    await db.init_db(path)
+
+    eng1 = PaperEngine()
+    await eng1.init()
+
+    trend = _make_trend(market_id="cond_persist", token_id="tok_persist")
+    pos, _ = await eng1.on_trend(trend, current_bid=0.39, current_ask=0.41)
+    assert pos is not None
+
+    # Simulate restart — new engine, same DB
+    eng2 = PaperEngine()
+    await eng2.init()
+
+    assert eng2._daily_market_entries.get("cond_persist", 0) >= 1
+
+    trend2 = _make_trend(market_id="cond_persist", token_id="tok_persist", timestamp=time.time() + 60)
+    pos, rejection = await eng2.on_trend(trend2, current_bid=0.39, current_ask=0.41)
+    assert pos is None
+    assert "max daily entries for this market" in rejection
+
+    await db.close_db()
+
+
+@pytest.mark.asyncio
 async def test_stale_position_closed(engine):
-    trend = _make_trend(current_price=0.30)
+    trend = _make_trend(first_surge_price=0.10, current_price=0.30)
     now = time.time()
     pos, _ = await engine.on_trend(trend, current_bid=0.29, current_ask=0.31)
     assert pos is not None

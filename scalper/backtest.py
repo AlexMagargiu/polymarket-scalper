@@ -145,6 +145,8 @@ async def simulate_params(
     threshold: float = config.SURGE_THRESHOLD,
     trailing_stop: float = config.TRAILING_STOP_PCT,
     take_profit: float = config.TAKE_PROFIT,
+    trend_min_magnitude: float = config.TREND_MIN_MAGNITUDE,
+    max_entries_per_market_per_day: int = config.MAX_ENTRIES_PER_MARKET_PER_DAY,
     use_existing_db: bool = False,
 ) -> dict:
     if not use_existing_db:
@@ -153,9 +155,10 @@ async def simulate_params(
     conn = await db.get_db()
 
     cursor = await conn.execute(
-        """SELECT t.*, s.surge_magnitude
+        """SELECT t.*, s.surge_magnitude, tr.first_surge_price AS trend_first_price, tr.current_price AS trend_current_price
            FROM trades t
            LEFT JOIN surges s ON t.surge_id = s.id
+           LEFT JOIN trends tr ON tr.trade_id = t.id
            WHERE t.exit_time IS NOT NULL
            ORDER BY t.entry_time"""
     )
@@ -168,27 +171,47 @@ async def simulate_params(
     sim_pnl = 0.0
     sim_wins = 0
     sim_skipped = 0
+    sim_skipped_magnitude = 0
+    sim_skipped_daily_limit = 0
     orig_pnl = 0.0
     orig_wins = 0
+    daily_market_entries: dict[str, dict[str, int]] = {}
+    trades_missing_trend_data = sum(1 for t in trades if t.get("trend_first_price") is None)
 
     for t in trades:
+        orig_trade_pnl = t["pnl"] or 0
+        orig_pnl += orig_trade_pnl
+        if orig_trade_pnl > 0:
+            orig_wins += 1
+
         surge_mag = t.get("surge_magnitude") or 0
         if surge_mag < threshold:
             sim_skipped += 1
-            orig_pnl += t["pnl"] or 0
-            if (t["pnl"] or 0) > 0:
-                orig_wins += 1
             continue
+
+        trend_first = t.get("trend_first_price")
+        trend_current = t.get("trend_current_price")
+        if trend_first is not None and trend_current is not None:
+            if trend_current - trend_first < trend_min_magnitude:
+                sim_skipped += 1
+                sim_skipped_magnitude += 1
+                continue
+
+        entry_day = t["entry_time"][:10] if t["entry_time"] else "unknown"
+        market_id = t.get("market_id") or "unknown"
+        if entry_day not in daily_market_entries:
+            daily_market_entries[entry_day] = {}
+        day_entries = daily_market_entries[entry_day]
+        if day_entries.get(market_id, 0) >= max_entries_per_market_per_day:
+            sim_skipped += 1
+            sim_skipped_daily_limit += 1
+            continue
+        day_entries[market_id] = day_entries.get(market_id, 0) + 1
         entry_price = t["entry_price"]
         peak = t.get("peak_price") or entry_price
         shares = t["shares"]
         direction = t["direction"]
         entry_fee = t["entry_fee"]
-        orig_trade_pnl = t["pnl"] or 0
-
-        orig_pnl += orig_trade_pnl
-        if orig_trade_pnl > 0:
-            orig_wins += 1
 
         if direction == "up":
             favorable = peak - entry_price
@@ -225,6 +248,8 @@ async def simulate_params(
             "threshold": threshold,
             "trailing_stop": trailing_stop,
             "take_profit": take_profit,
+            "trend_min_magnitude": trend_min_magnitude,
+            "max_entries_per_market_per_day": max_entries_per_market_per_day,
         },
         "original": {
             "total_trades": total,
@@ -239,7 +264,11 @@ async def simulate_params(
             "wins": sim_wins,
             "losses": sim_trades - sim_wins,
             "win_rate": round(sim_wins / sim_trades, 4) if sim_trades > 0 else 0,
-            "skipped_by_threshold": sim_skipped,
+            "skipped_total": sim_skipped,
+            "skipped_by_threshold": sim_skipped - sim_skipped_magnitude - sim_skipped_daily_limit,
+            "skipped_by_magnitude": sim_skipped_magnitude,
+            "skipped_by_daily_limit": sim_skipped_daily_limit,
+            "trades_missing_trend_data": trades_missing_trend_data,
         },
     }
 
@@ -257,6 +286,8 @@ def cli():
     parser.add_argument("--threshold", type=float, default=config.SURGE_THRESHOLD)
     parser.add_argument("--trailing", type=float, default=config.TRAILING_STOP_PCT)
     parser.add_argument("--take-profit", type=float, default=config.TAKE_PROFIT)
+    parser.add_argument("--min-magnitude", type=float, default=config.TREND_MIN_MAGNITUDE)
+    parser.add_argument("--max-entries-per-market", type=int, default=config.MAX_ENTRIES_PER_MARKET_PER_DAY)
     args = parser.parse_args()
 
     if args.db != config.DB_PATH:
@@ -279,7 +310,8 @@ def cli():
             print("No trades to export")
     elif args.simulate:
         result = asyncio.run(
-            simulate_params(args.threshold, args.trailing, args.take_profit)
+            simulate_params(args.threshold, args.trailing, args.take_profit,
+                            args.min_magnitude, args.max_entries_per_market)
         )
         print(json.dumps(result, indent=2))
     else:

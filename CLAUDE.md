@@ -92,6 +92,17 @@ tests/
 - Bidirectional: ride up (buy YES) and down (buy NO)
 - Markets: all active with $10K+ 24h volume
 
+## VPS Database Schema (actual column names on live DB)
+
+The VPS DB was created before some code refactors — column names differ from what the code defines. Always check these before querying:
+
+- **trades**: `market_name` (not `question`), `pnl` (not `net_pnl`), no `trade_id` column in `trends` table yet (migration needed)
+- **surges**: `surge_magnitude` (not `magnitude`)
+- **trends**: `rejection_reason` (not `reason`), columns: `id, timestamp, token_id, market_id, market_name, surge_count, first_surge_price, current_price, window_seconds, entered, rejection_reason, entry_bid, entry_ask`
+- **trades columns**: `id, surge_id, market_id, token_id, market_name, direction, entry_price, entry_fee, entry_time, exit_price, exit_fee, exit_time, exit_reason, pnl, shares, position_cost, peak_price, max_favorable_excursion, entry_bid, entry_spread, config_trailing_pct, config_max_entry, config_trend_min_surges, max_adverse_excursion, config_surge_threshold, config_taker_fee_rate, config_position_size`
+- **VPS has no `sqlite3` CLI** — use `venv/bin/python3 -c "import sqlite3; ..."` instead
+- **Bot restarted with v6 code on 2026-05-22 20:29 UTC** — trades before that used older parameters/no sports filter
+
 ## Behavioral Guidelines
 
 - Never exceed position limits (10 concurrent, 3 per market, $25 each)

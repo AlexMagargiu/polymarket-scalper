@@ -27,6 +27,7 @@ class PaperEngine:
         self._start_time: float = time.time()
         self._last_prices: dict[str, tuple[float, float]] = {}
         self._last_update_time: dict[str, float] = {}
+        self._daily_market_entries: dict[str, int] = {}
 
     async def init(self):
         self._balance = await db.get_balance()
@@ -37,6 +38,8 @@ class PaperEngine:
         self._daily_trades = await db.get_daily_trade_count(today)
         if self._daily_pnl <= -config.DAILY_LOSS_LIMIT:
             self._paused = True
+
+        self._daily_market_entries = await db.get_daily_entries_per_market(today)
 
         open_trades = await db.get_open_trades()
         for row in open_trades:
@@ -91,6 +94,16 @@ class PaperEngine:
             logger.info("REJECTED %s: %s", trend.market_name[:40], reason)
             return None, reason
 
+        trend_magnitude = trend.current_price - trend.first_surge_price
+        if trend_magnitude <= 0:
+            reason = f"reversed trend ({trend.first_surge_price:.2f}->{trend.current_price:.2f})"
+            logger.info("REJECTED %s: %s", trend.market_name[:40], reason)
+            return None, reason
+        if trend_magnitude < config.TREND_MIN_MAGNITUDE:
+            reason = f"weak trend magnitude {trend_magnitude:.2f} < {config.TREND_MIN_MAGNITUDE:.2f}"
+            logger.info("REJECTED %s: %s", trend.market_name[:40], reason)
+            return None, reason
+
         rejection = self._validate_entry(trend, entry_price)
         if rejection:
             logger.info("REJECTED %s: %s", trend.market_name[:40], rejection)
@@ -137,6 +150,7 @@ class PaperEngine:
             surge_id=surge_id,
         )
         self._positions[trade_id] = position
+        self._daily_market_entries[trend.market_id] = self._daily_market_entries.get(trend.market_id, 0) + 1
 
         logger.info(
             "TREND ENTRY: %s @ %.2f (%d surges, %.2f->%.2f, %d shares) [balance=$%.2f]",
@@ -166,6 +180,10 @@ class PaperEngine:
         )
         if market_count >= config.MAX_POSITIONS_PER_MARKET:
             return f"max positions per market ({config.MAX_POSITIONS_PER_MARKET})"
+
+        daily_market_entries = self._daily_market_entries.get(trend.market_id, 0)
+        if daily_market_entries >= config.MAX_ENTRIES_PER_MARKET_PER_DAY:
+            return f"max daily entries for this market ({config.MAX_ENTRIES_PER_MARKET_PER_DAY})"
 
         if self._daily_trades >= config.MAX_DAILY_TRADES:
             return f"max daily trades ({config.MAX_DAILY_TRADES})"
@@ -361,6 +379,7 @@ class PaperEngine:
             self._daily_date = today
             self._daily_pnl = 0.0
             self._daily_trades = 0
+            self._daily_market_entries = {}
             self._paused = False
 
     def get_status(self) -> dict:
